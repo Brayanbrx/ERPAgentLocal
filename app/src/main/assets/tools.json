@@ -1,0 +1,74 @@
+[
+  {
+    "name": "createCustomer",
+    "operationId": "createCustomer",
+    "method": "POST",
+    "path": "/customers",
+    "description": "Create a customer in the ERP.",
+    "requiredArguments": ["firstName", "lastName"],
+    "optionalArguments": ["phone", "email"]
+  },
+  {
+    "name": "searchCustomer",
+    "operationId": "searchCustomer",
+    "method": "GET",
+    "path": "/customers/search?name={name}",
+    "description": "Search customers by name or last name.",
+    "requiredArguments": ["name"],
+    "optionalArguments": []
+  },
+  {
+    "name": "createProduct",
+    "operationId": "createProduct",
+    "method": "POST",
+    "path": "/products",
+    "description": "Create a product in the ERP.",
+    "requiredArguments": ["name", "salePrice", "purchasePrice"],
+    "optionalArguments": ["description", "unit"]
+  },
+  {
+    "name": "searchProduct",
+    "operationId": "searchProduct",
+    "method": "GET",
+    "path": "/products/search?name={name}",
+    "description": "Search products by name.",
+    "requiredArguments": ["name"],
+    "optionalArguments": []
+  },
+  {
+    "name": "updateProduct",
+    "operationId": "updateProduct",
+    "method": "PATCH",
+    "path": "/products/{productId}",
+    "description": "Update product information.",
+    "requiredArguments": ["productId"],
+    "optionalArguments": ["name", "description", "unit", "salePrice", "purchasePrice"]
+  },
+  {
+    "name": "getInventory",
+    "operationId": "getInventory",
+    "method": "GET",
+    "path": "/inventory/{productId}",
+    "description": "Get inventory by product ID.",
+    "requiredArguments": ["productId"],
+    "optionalArguments": []
+  },
+  {
+    "name": "createPurchase",
+    "operationId": "createPurchase",
+    "method": "POST",
+    "path": "/purchases",
+    "description": "Create a purchase and increase inventory.",
+    "requiredArguments": ["productId", "quantity", "unitCost"],
+    "optionalArguments": []
+  },
+  {
+    "name": "createSale",
+    "operationId": "createSale",
+    "method": "POST",
+    "path": "/sales",
+    "description": "Create a sale and decrease inventory.",
+    "requiredArguments": ["customerId", "items"],
+    "optionalArguments": []
+  }
+]

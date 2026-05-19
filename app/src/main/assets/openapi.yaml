@@ -1,0 +1,937 @@
+openapi: 3.0.3
+
+info:
+  title: Serverless ERP API
+  version: 1.0.0
+  description: >
+    API serverless para un ERP simple conectado a una aplicación Android con agente LLM local.
+    Este archivo OpenAPI funciona como contrato formal de herramientas para el agente.
+    Cada operationId corresponde al nombre de una tool en Android.
+
+servers:
+  - url: https://k5nlr60gn9.execute-api.us-east-1.amazonaws.com/Prod
+    description: AWS API Gateway Production
+  - url: http://127.0.0.1:3000
+    description: SAM Local
+
+tags:
+  - name: Health
+    description: Verificación del estado del backend.
+  - name: Customers
+    description: Gestión de clientes.
+  - name: Products
+    description: Gestión de productos.
+  - name: Inventory
+    description: Gestión de inventario.
+  - name: Purchases
+    description: Registro de compras.
+  - name: Sales
+    description: Registro de ventas.
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      operationId: checkHealth
+      summary: Check backend health
+      description: Verifica que el backend serverless esté funcionando.
+      responses:
+        "200":
+          description: Backend running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /customers:
+    post:
+      tags:
+        - Customers
+      operationId: createCustomer
+      summary: Create a customer
+      description: Crea un cliente en el ERP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerRequest"
+            examples:
+              default:
+                value:
+                  firstName: Juan
+                  lastName: Perez
+                  phone: "70000000"
+                  email: juan@email.com
+      responses:
+        "200":
+          description: Customer created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - Customers
+      operationId: listCustomers
+      summary: List customers
+      description: Lista clientes registrados.
+      responses:
+        "200":
+          description: Customers listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerListResponse"
+
+  /customers/search:
+    get:
+      tags:
+        - Customers
+      operationId: searchCustomer
+      summary: Search customer by name
+      description: Busca clientes por nombre o apellido.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: Nombre o apellido del cliente.
+          schema:
+            type: string
+          example: Juan
+      responses:
+        "200":
+          description: Search result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerListResponse"
+
+  /customers/{customerId}:
+    patch:
+      tags:
+        - Customers
+      operationId: updateCustomer
+      summary: Update customer
+      description: Actualiza parcialmente los datos de un cliente.
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUS-001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCustomerRequest"
+      responses:
+        "200":
+          description: Customer updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+
+    delete:
+      tags:
+        - Customers
+      operationId: deleteCustomer
+      summary: Soft delete customer
+      description: Desactiva un cliente usando borrado lógico.
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUS-001
+      responses:
+        "200":
+          description: Customer disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+
+  /products:
+    post:
+      tags:
+        - Products
+      operationId: createProduct
+      summary: Create a product
+      description: Crea un producto en el ERP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+            examples:
+              default:
+                value:
+                  name: Cafe
+                  description: Producto creado desde agente local
+                  unit: unit
+                  salePrice: 25
+                  purchasePrice: 18
+      responses:
+        "200":
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+
+    get:
+      tags:
+        - Products
+      operationId: listProducts
+      summary: List products
+      description: Lista productos registrados.
+      responses:
+        "200":
+          description: Products listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductListResponse"
+
+  /products/search:
+    get:
+      tags:
+        - Products
+      operationId: searchProduct
+      summary: Search product by name
+      description: Busca productos por nombre.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: Nombre del producto.
+          schema:
+            type: string
+          example: Cafe
+      responses:
+        "200":
+          description: Search result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductListResponse"
+
+  /products/{productId}:
+    patch:
+      tags:
+        - Products
+      operationId: updateProduct
+      summary: Update product
+      description: Actualiza parcialmente los datos de un producto.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: PROD-001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductRequest"
+            examples:
+              updatePrice:
+                value:
+                  salePrice: 30
+                  purchasePrice: 20
+      responses:
+        "200":
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+
+    delete:
+      tags:
+        - Products
+      operationId: deleteProduct
+      summary: Soft delete product
+      description: Desactiva un producto usando borrado lógico.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: PROD-001
+      responses:
+        "200":
+          description: Product disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+
+  /inventory/{productId}:
+    get:
+      tags:
+        - Inventory
+      operationId: getInventory
+      summary: Get inventory by product
+      description: Consulta el inventario de un producto.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: PROD-001
+      responses:
+        "200":
+          description: Inventory found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryResponse"
+
+  /inventory/low-stock:
+    get:
+      tags:
+        - Inventory
+      operationId: listLowStock
+      summary: List low stock products
+      description: Lista productos con stock bajo.
+      responses:
+        "200":
+          description: Low stock products
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryListResponse"
+
+  /inventory/adjustments:
+    post:
+      tags:
+        - Inventory
+      operationId: createInventoryAdjustment
+      summary: Create inventory adjustment
+      description: Crea un ajuste manual de inventario.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInventoryAdjustmentRequest"
+            examples:
+              default:
+                value:
+                  productId: PROD-001
+                  quantity: 10
+                  type: ADJUSTMENT_IN
+                  reason: Carga inicial
+      responses:
+        "200":
+          description: Adjustment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryAdjustmentResponse"
+
+  /purchases:
+    post:
+      tags:
+        - Purchases
+      operationId: createPurchase
+      summary: Create a purchase and increase inventory
+      description: Registra una compra, aumenta inventario y crea movimiento de inventario tipo PURCHASE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePurchaseRequest"
+            examples:
+              default:
+                value:
+                  productId: PROD-001
+                  quantity: 50
+                  unitCost: 18
+      responses:
+        "200":
+          description: Purchase created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseResponse"
+
+    get:
+      tags:
+        - Purchases
+      operationId: listPurchases
+      summary: List purchases
+      description: Lista compras registradas.
+      responses:
+        "200":
+          description: Purchases listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseListResponse"
+
+  /sales:
+    post:
+      tags:
+        - Sales
+      operationId: createSale
+      summary: Create a sale and decrease inventory
+      description: Registra una venta, descuenta inventario y crea movimiento de inventario tipo SALE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSaleRequest"
+            examples:
+              default:
+                value:
+                  customerId: CUS-001
+                  items:
+                    - productId: PROD-001
+                      quantity: 2
+      responses:
+        "200":
+          description: Sale created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleResponse"
+
+    get:
+      tags:
+        - Sales
+      operationId: listSales
+      summary: List sales
+      description: Lista ventas registradas.
+      responses:
+        "200":
+          description: Sales listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleListResponse"
+
+  /sales/by-customer/{customerId}:
+    get:
+      tags:
+        - Sales
+      operationId: listSalesByCustomer
+      summary: List sales by customer
+      description: Lista ventas de un cliente.
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: CUS-001
+      responses:
+        "200":
+          description: Sales found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleListResponse"
+
+components:
+  schemas:
+    ApiResponseBase:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Operation completed
+        data:
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Invalid request
+        data:
+          nullable: true
+
+    HealthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Service is running
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ok
+            service:
+              type: string
+              example: serverless-erp
+
+    CreateCustomerRequest:
+      type: object
+      required:
+        - firstName
+        - lastName
+      properties:
+        firstName:
+          type: string
+          example: Juan
+        lastName:
+          type: string
+          example: Perez
+        phone:
+          type: string
+          example: "70000000"
+        email:
+          type: string
+          example: juan@email.com
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+
+    Customer:
+      type: object
+      properties:
+        customerId:
+          type: string
+          example: CUS-001
+        firstName:
+          type: string
+          example: Juan
+        lastName:
+          type: string
+          example: Perez
+        phone:
+          type: string
+          example: "70000000"
+        email:
+          type: string
+          example: juan@email.com
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
+        updatedAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
+
+    CustomerResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/Customer"
+
+    CustomerListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+
+    CreateProductRequest:
+      type: object
+      required:
+        - name
+        - salePrice
+        - purchasePrice
+      properties:
+        name:
+          type: string
+          example: Cafe
+        description:
+          type: string
+          example: Producto creado desde agente local
+        unit:
+          type: string
+          example: unit
+        salePrice:
+          type: number
+          example: 25
+        purchasePrice:
+          type: number
+          example: 18
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        unit:
+          type: string
+        salePrice:
+          type: number
+        purchasePrice:
+          type: number
+
+    Product:
+      type: object
+      properties:
+        productId:
+          type: string
+          example: PROD-001
+        name:
+          type: string
+          example: Cafe
+        description:
+          type: string
+          example: Producto creado desde agente local
+        unit:
+          type: string
+          example: unit
+        salePrice:
+          type: number
+          example: 25
+        purchasePrice:
+          type: number
+          example: 18
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
+        updatedAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
+
+    ProductResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/Product"
+
+    ProductListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+
+    Inventory:
+      type: object
+      properties:
+        productId:
+          type: string
+          example: PROD-001
+        stock:
+          type: integer
+          example: 50
+        minStock:
+          type: integer
+          example: 5
+        updatedAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
+
+    InventoryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/Inventory"
+
+    InventoryListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Inventory"
+
+    CreateInventoryAdjustmentRequest:
+      type: object
+      required:
+        - productId
+        - quantity
+        - type
+        - reason
+      properties:
+        productId:
+          type: string
+          example: PROD-001
+        quantity:
+          type: integer
+          example: 10
+        type:
+          type: string
+          enum:
+            - ADJUSTMENT_IN
+            - ADJUSTMENT_OUT
+          example: ADJUSTMENT_IN
+        reason:
+          type: string
+          example: Carga inicial
+
+    InventoryAdjustmentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+
+    CreatePurchaseRequest:
+      type: object
+      required:
+        - productId
+        - quantity
+        - unitCost
+      properties:
+        productId:
+          type: string
+          example: PROD-001
+        quantity:
+          type: integer
+          example: 50
+        unitCost:
+          type: number
+          example: 18
+
+    Purchase:
+      type: object
+      properties:
+        purchaseId:
+          type: string
+          example: PUR-001
+        productId:
+          type: string
+          example: PROD-001
+        quantity:
+          type: integer
+          example: 50
+        unitCost:
+          type: number
+          example: 18
+        total:
+          type: number
+          example: 900
+        createdAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
+
+    PurchaseResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            purchase:
+              $ref: "#/components/schemas/Purchase"
+            inventory:
+              $ref: "#/components/schemas/Inventory"
+            movement:
+              $ref: "#/components/schemas/InventoryMovement"
+
+    PurchaseListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Purchase"
+
+    CreateSaleRequest:
+      type: object
+      required:
+        - customerId
+        - items
+      properties:
+        customerId:
+          type: string
+          example: CUS-001
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreateSaleItemRequest"
+
+    CreateSaleItemRequest:
+      type: object
+      required:
+        - productId
+        - quantity
+      properties:
+        productId:
+          type: string
+          example: PROD-001
+        quantity:
+          type: integer
+          example: 2
+
+    SaleItem:
+      type: object
+      properties:
+        productId:
+          type: string
+          example: PROD-001
+        productName:
+          type: string
+          example: Cafe
+        quantity:
+          type: integer
+          example: 2
+        unitPrice:
+          type: number
+          example: 25
+        subtotal:
+          type: number
+          example: 50
+
+    Sale:
+      type: object
+      properties:
+        saleId:
+          type: string
+          example: SALE-001
+        customerId:
+          type: string
+          example: CUS-001
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SaleItem"
+        total:
+          type: number
+          example: 50
+        createdAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
+
+    SaleResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            sale:
+              $ref: "#/components/schemas/Sale"
+            inventory:
+              type: array
+              items:
+                $ref: "#/components/schemas/Inventory"
+            movements:
+              type: array
+              items:
+                $ref: "#/components/schemas/InventoryMovement"
+
+    SaleListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Sale"
+
+    InventoryMovement:
+      type: object
+      properties:
+        movementId:
+          type: string
+          example: MOV-001
+        productId:
+          type: string
+          example: PROD-001
+        type:
+          type: string
+          enum:
+            - PURCHASE
+            - SALE
+            - ADJUSTMENT_IN
+            - ADJUSTMENT_OUT
+          example: SALE
+        quantity:
+          type: integer
+          example: -2
+        reason:
+          type: string
+          example: Sale SALE-001
+        createdAt:
+          type: string
+          example: "2026-05-14T18:30:00Z"
