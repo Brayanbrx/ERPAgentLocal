@@ -51,6 +51,10 @@ dependencies {
     // LiteRT-LM para ejecutar modelos .litertlm localmente
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
 
+    // Vosk para reconocmiiento de voz offline
+    implementation("com.alphacephei:vosk-android:0.3.75")
+    implementation("net.java.dev.jna:jna:5.17.0@aar")
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
@@ -68,4 +72,6 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+    
 }

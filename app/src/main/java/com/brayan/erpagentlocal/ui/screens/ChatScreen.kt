@@ -1,7 +1,10 @@
 package com.brayan.erpagentlocal.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,15 +15,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,20 +45,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.brayan.erpagentlocal.agent.ToolCatalogLoader
 import com.brayan.erpagentlocal.agent.ToolRegistry
 import com.brayan.erpagentlocal.ai.AgentService
 import com.brayan.erpagentlocal.ai.LocalModelService
+import com.brayan.erpagentlocal.speech.VoskSpeechService
 import com.brayan.erpagentlocal.ui.components.ChatMessageUi
 import com.brayan.erpagentlocal.ui.components.MessageBubble
 import com.brayan.erpagentlocal.ui.components.StatusCard
 import com.brayan.erpagentlocal.ui.theme.ErpColors
 import com.brayan.erpagentlocal.util.ModelFileManager
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +79,7 @@ fun ChatScreen() {
 
     val agentService = remember { AgentService() }
     val localModelService = remember { LocalModelService() }
+    val voskSpeechService = remember { VoskSpeechService() }
 
     val messages = remember {
         mutableStateListOf(
@@ -79,8 +90,7 @@ fun ChatScreen() {
 
                     Puedo ayudarte a trabajar con clientes, productos, compras, ventas e inventario usando lenguaje natural.
 
-                    Primero selecciona e inicializa el modelo. Luego puedes escribir algo como:
-                    “Crea un cliente llamado Ana López”
+                    Puedes escribir una instrucción o tocar el micrófono para dictarla.
                 """.trimIndent()
             )
         )
@@ -91,6 +101,11 @@ fun ChatScreen() {
     var backendStatus by remember { mutableStateOf("Sin verificar") }
     var modelName by remember { mutableStateOf(localModelService.getLoadedModelName().orEmpty()) }
     var modelReady by remember { mutableStateOf(localModelService.isInitialized()) }
+
+    var speechReady by remember { mutableStateOf(false) }
+    var speechStatus by remember { mutableStateOf("Voz no activada") }
+    var isRecording by remember { mutableStateOf(false) }
+    var partialSpeechText by remember { mutableStateOf("") }
 
     fun refreshModelStatus() {
         modelReady = localModelService.isInitialized()
@@ -106,46 +121,53 @@ fun ChatScreen() {
         )
     }
 
+    fun hasAudioPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     fun runAction(
-    userText: String,
-    showUserMessage: Boolean = true,
-    action: suspend () -> String
-) {
-    scope.launch {
-        try {
-            loading = true
+        userText: String,
+        showUserMessage: Boolean = true,
+        action: suspend () -> String
+    ) {
+        scope.launch {
+            try {
+                loading = true
 
-            if (showUserMessage) {
-                addMessage("user", userText)
-            }
-
-            val result = action()
-
-            addMessage(
-                role = "assistant",
-                content = result.ifBlank {
-                    "No recibí una respuesta válida."
+                if (showUserMessage) {
+                    addMessage("user", userText)
                 }
-            )
 
-            refreshModelStatus()
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (throwable: Throwable) {
-            addMessage(
-                role = "assistant",
-                content = """
-                    Ocurrió un error, pero la app pudo recuperarse.
+                val result = action()
 
-                    Detalle:
-                    ${throwable.message ?: throwable::class.java.simpleName}
-                """.trimIndent()
-            )
-        } finally {
-            loading = false
+                addMessage(
+                    role = "assistant",
+                    content = result.ifBlank {
+                        "No recibí una respuesta válida."
+                    }
+                )
+
+                refreshModelStatus()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (throwable: Throwable) {
+                addMessage(
+                    role = "assistant",
+                    content = """
+                        Ocurrió un error, pero la app pudo recuperarse.
+
+                        Detalle:
+                        ${throwable.message ?: throwable::class.java.simpleName}
+                    """.trimIndent()
+                )
+            } finally {
+                loading = false
+            }
         }
     }
-}
 
     fun sendMessage(messageToSend: String) {
         val cleanMessage = messageToSend.trim()
@@ -194,18 +216,158 @@ fun ChatScreen() {
         messages.add(
             ChatMessageUi(
                 role = "assistant",
-                content = "Chat limpiado. Puedes escribir una nueva instrucción."
+                content = "Chat limpiado. Puedes escribir o grabar una nueva instrucción."
             )
         )
 
         input = ""
+        partialSpeechText = ""
         backendStatus = "Sin verificar"
+
+        if (isRecording) {
+            voskSpeechService.cancelListening()
+            isRecording = false
+        }
 
         scope.launch {
             try {
                 agentService.processUserMessage("/clear")
             } catch (_: Exception) {
             }
+        }
+    }
+
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            speechStatus = "Preparando reconocimiento de voz..."
+
+            scope.launch {
+                voskSpeechService.initialize(
+                    context = context,
+                    onReady = {
+                        scope.launch {
+                            speechReady = true
+                            speechStatus = "Voz lista"
+                            addMessage("assistant", "Reconocimiento de voz listo. Toca el micrófono para hablar.")
+                        }
+                    },
+                    onError = { error ->
+                        scope.launch {
+                            speechReady = false
+                            speechStatus = "Error de voz"
+                            addMessage("assistant", error)
+                        }
+                    }
+                )
+            }
+        } else {
+            speechReady = false
+            speechStatus = "Permiso de micrófono denegado"
+            addMessage("assistant", "Necesito permiso de micrófono para grabar audio.")
+        }
+    }
+
+    fun prepareSpeechIfNeeded() {
+        if (!hasAudioPermission()) {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+
+        if (speechReady) {
+            return
+        }
+
+        speechStatus = "Preparando reconocimiento de voz..."
+
+        scope.launch {
+            voskSpeechService.initialize(
+                context = context,
+                onReady = {
+                    scope.launch {
+                        speechReady = true
+                        speechStatus = "Voz lista"
+                        addMessage("assistant", "Reconocimiento de voz listo. Toca el micrófono para hablar.")
+                    }
+                },
+                onError = { error ->
+                    scope.launch {
+                        speechReady = false
+                        speechStatus = "Error de voz"
+                        addMessage("assistant", error)
+                    }
+                }
+            )
+        }
+    }
+
+    fun startRecording() {
+        if (!hasAudioPermission()) {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+
+        if (!speechReady) {
+            prepareSpeechIfNeeded()
+            return
+        }
+
+        if (isRecording) {
+            return
+        }
+
+        partialSpeechText = ""
+        isRecording = true
+        speechStatus = "Escuchando..."
+
+        voskSpeechService.startListening(
+            onPartialResult = { partial ->
+                scope.launch {
+                    partialSpeechText = partial
+                }
+            },
+            onFinalResult = { finalText ->
+                scope.launch {
+                    val cleanText = finalText.trim()
+
+                    isRecording = false
+                    speechStatus = "Voz lista"
+                    partialSpeechText = ""
+
+                    if (cleanText.isNotBlank()) {
+                        input = cleanText
+                        sendMessage(cleanText)
+                    } else {
+                        addMessage("assistant", "No pude reconocer el audio. Intenta hablar un poco más claro.")
+                    }
+                }
+            },
+            onError = { error ->
+                scope.launch {
+                    isRecording = false
+                    speechStatus = "Error de voz"
+                    partialSpeechText = ""
+                    addMessage("assistant", error)
+                }
+            }
+        )
+    }
+
+    fun stopRecording() {
+        if (!isRecording) {
+            return
+        }
+
+        speechStatus = "Procesando audio..."
+        voskSpeechService.stopListening()
+    }
+
+    fun toggleRecording() {
+        if (isRecording) {
+            stopRecording()
+        } else {
+            startRecording()
         }
     }
 
@@ -251,6 +413,10 @@ fun ChatScreen() {
         }
     }
 
+    LaunchedEffect(Unit) {
+        prepareSpeechIfNeeded()
+    }
+
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.lastIndex)
@@ -260,6 +426,7 @@ fun ChatScreen() {
     DisposableEffect(Unit) {
         onDispose {
             localModelService.close()
+            voskSpeechService.release()
         }
     }
 
@@ -271,6 +438,16 @@ fun ChatScreen() {
                         Text(
                             text = "ERP Agent Local",
                             style = MaterialTheme.typography.titleMedium
+                        )
+
+                        Text(
+                            text = speechStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (speechReady) {
+                                ErpColors.Success
+                            } else {
+                                ErpColors.TextMuted
+                            }
                         )
                     }
                 },
@@ -326,7 +503,7 @@ fun ChatScreen() {
                     ) {
                         OutlinedButton(
                             modifier = Modifier.weight(1f),
-                            enabled = !loading,
+                            enabled = !loading && !isRecording,
                             onClick = {
                                 modelPickerLauncher.launch(
                                     arrayOf(
@@ -341,7 +518,7 @@ fun ChatScreen() {
 
                         Button(
                             modifier = Modifier.weight(1f),
-                            enabled = !loading,
+                            enabled = !loading && !isRecording,
                             onClick = {
                                 runAction("Inicializar modelo") {
                                     val modelFile = ModelFileManager.getDefaultModelFile(context)
@@ -364,6 +541,33 @@ fun ChatScreen() {
                             }
                         ) {
                             Text("Limpiar")
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = if (speechReady) ErpColors.SuccessSoft else ErpColors.WarningSoft,
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                text = if (speechReady) "Voz local lista" else "Voz pendiente",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (speechReady) ErpColors.Success else ErpColors.Warning
+                            )
+                        }
+
+                        TextButton(
+                            enabled = !loading && !isRecording,
+                            onClick = {
+                                prepareSpeechIfNeeded()
+                            }
+                        ) {
+                            Text("Activar voz")
                         }
                     }
                 }
@@ -393,34 +597,88 @@ fun ChatScreen() {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = ErpColors.Surface,
-                shape = RoundedCornerShape(22.dp)
+                shape = RoundedCornerShape(28.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
+                    modifier = Modifier.padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedTextField(
-                        modifier = Modifier.fillMaxWidth(),
-                        value = input,
-                        onValueChange = { input = it },
-                        label = {
-                            Text("Escribe una instrucción para el agente")
-                        },
-                        placeholder = {
-                            Text("Ej: Véndele 2 unidades de Café a Ana López")
-                        },
-                        minLines = 2,
-                        maxLines = 5,
-                        enabled = !loading
-                    )
+                    if (isRecording || partialSpeechText.isNotBlank()) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = ErpColors.ErrorSoft,
+                            shape = RoundedCornerShape(18.dp)
+                        ) {
+                            Text(
+                                modifier = Modifier.padding(12.dp),
+                                text = if (partialSpeechText.isBlank()) {
+                                    "Escuchando..."
+                                } else {
+                                    "Escuchando: $partialSpeechText"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ErpColors.Error
+                            )
+                        }
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            modifier = Modifier.weight(1f),
+                            value = input,
+                            onValueChange = { input = it },
+                            placeholder = {
+                                Text("Escribe o graba una instrucción")
+                            },
+                            minLines = 1,
+                            maxLines = 4,
+                            enabled = !loading && !isRecording,
+                            shape = RoundedCornerShape(24.dp)
+                        )
+
+                        IconButton(
+                            modifier = Modifier
+                                .size(54.dp)
+                                .background(
+                                    color = when {
+                                        isRecording -> ErpColors.Error
+                                        input.isNotBlank() -> ErpColors.Primary
+                                        else -> ErpColors.Primary
+                                    },
+                                    shape = CircleShape
+                                ),
+                            enabled = !loading,
+                            onClick = {
+                                if (input.isNotBlank() && !isRecording) {
+                                    sendMessage(input)
+                                } else {
+                                    toggleRecording()
+                                }
+                            }
+                        ) {
+                            Text(
+                                text = when {
+                                    isRecording -> "■"
+                                    input.isNotBlank() -> "➤"
+                                    else -> "🎙"
+                                },
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(
-                            modifier = Modifier.weight(1f),
-                            enabled = !loading && input.isNotBlank(),
+                            enabled = !loading && input.isNotBlank() && !isRecording,
                             onClick = {
                                 input = ""
                             }
@@ -428,15 +686,16 @@ fun ChatScreen() {
                             Text("Borrar")
                         }
 
-                        Button(
-                            modifier = Modifier.weight(2f),
-                            enabled = !loading && input.isNotBlank(),
-                            onClick = {
-                                sendMessage(input)
-                            }
-                        ) {
-                            Text("Enviar")
-                        }
+                        Text(
+                            text = when {
+                                isRecording -> "Toca ■ para detener"
+                                input.isNotBlank() -> "Toca ➤ para enviar"
+                                speechReady -> "Toca 🎙 para hablar"
+                                else -> "Activa voz para dictar"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ErpColors.TextMuted
+                        )
                     }
                 }
             }
