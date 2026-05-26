@@ -8,6 +8,7 @@ import com.brayan.erpagentlocal.agent.ToolRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,17 +46,18 @@ class ToolExecutor(
     ): ToolExecutionResult {
         return try {
             val method = HttpMethod.fromValue(toolDefinition.method)
+            val normalizedArguments = normalizeArgumentsForTool(toolDefinition.name, arguments)
 
             val path = buildPath(
                 pathTemplate = toolDefinition.path,
-                arguments = arguments
+                arguments = normalizedArguments
             )
 
             val body = when (method) {
                 HttpMethod.POST,
                 HttpMethod.PATCH -> buildBody(
                     toolDefinition = toolDefinition,
-                    arguments = arguments
+                    arguments = normalizedArguments
                 )
 
                 HttpMethod.GET,
@@ -129,6 +131,15 @@ class ToolExecutor(
     suspend fun checkHealth(): String {
         val response = apiClient.get(ApiConfig.HEALTH)
         return formatJson("HEALTH", response)
+    }
+
+    suspend fun pingBackend(): String {
+        return try {
+            val response = apiClient.get(ApiConfig.HEALTH)
+            if (response.optBoolean("success", false)) "Online" else "Sin conexión"
+        } catch (_: Exception) {
+            "Sin conexión"
+        }
     }
 
     suspend fun runFullErpDemo(): String {
@@ -317,5 +328,45 @@ class ToolExecutor(
             appendLine()
             appendLine(json.toString(2))
         }
+    }
+
+    // Normaliza los campos de nombre (minúsculas, sin acentos) en herramientas de creación y búsqueda
+    // para que el backend almacene y recupere datos de forma consistente sin importar la fuente.
+    private fun normalizeArgumentsForTool(toolName: String, arguments: JSONObject): JSONObject {
+        return when (toolName) {
+            "createProduct", "updateProduct" -> {
+                val copy = JSONObject(arguments.toString())
+                copy.optString("name").takeIf { it.isNotBlank() }
+                    ?.let { copy.put("name", normalizeNameText(it)) }
+                copy
+            }
+            "createCustomer" -> {
+                val copy = JSONObject(arguments.toString())
+                copy.optString("firstName").takeIf { it.isNotBlank() }
+                    ?.let { copy.put("firstName", stripLeadingArticle(normalizeNameText(it))) }
+                copy.optString("lastName").takeIf { it.isNotBlank() }
+                    ?.let { copy.put("lastName", stripLeadingArticle(normalizeNameText(it))) }
+                copy
+            }
+            "searchProduct", "searchCustomer" -> {
+                val copy = JSONObject(arguments.toString())
+                copy.optString("name").takeIf { it.isNotBlank() }
+                    ?.let { copy.put("name", normalizeNameText(it)) }
+                copy
+            }
+            else -> arguments
+        }
+    }
+
+    private fun normalizeNameText(value: String): String {
+        val noAccents = Normalizer.normalize(value, Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}"), "")
+        return noAccents.trim().lowercase().replace(Regex("\\s+"), " ")
+    }
+
+    private fun stripLeadingArticle(value: String): String {
+        val articles = listOf("el ", "la ", "los ", "las ", "al ")
+        return articles.firstOrNull { value.startsWith(it) }
+            ?.let { value.removePrefix(it).trim() } ?: value
     }
 }

@@ -38,6 +38,10 @@ object ToolRegistry {
         return catalog.describeToolsForPrompt()
     }
 
+    fun getAllTools(): List<ToolDefinition> {
+        return catalog.getAll()
+    }
+
     fun count(): Int {
         return catalog.count()
     }

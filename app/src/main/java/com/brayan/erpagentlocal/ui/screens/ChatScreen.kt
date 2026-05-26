@@ -37,398 +37,82 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.brayan.erpagentlocal.agent.ToolCatalogLoader
-import com.brayan.erpagentlocal.agent.ToolRegistry
-import com.brayan.erpagentlocal.ai.AgentService
-import com.brayan.erpagentlocal.ai.LocalModelService
-import com.brayan.erpagentlocal.speech.VoskSpeechService
-import com.brayan.erpagentlocal.ui.components.ChatMessageUi
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.brayan.erpagentlocal.ui.components.MessageBubble
 import com.brayan.erpagentlocal.ui.components.StatusCard
 import com.brayan.erpagentlocal.ui.theme.ErpColors
-import com.brayan.erpagentlocal.util.ModelFileManager
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen() {
+fun ChatScreen(
+    viewModel: ChatViewModel = viewModel()
+) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
 
-    val loadedCatalog = remember {
-        val catalog = ToolCatalogLoader.loadFromAssets(context)
-        ToolRegistry.setCatalog(catalog)
-        catalog
-    }
-
-    val agentService = remember { AgentService() }
-    val localModelService = remember { LocalModelService() }
-    val voskSpeechService = remember { VoskSpeechService() }
-
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessageUi(
-                role = "assistant",
-                content = """
-                    Hola. Soy tu agente ERP local.
-
-                    Puedo ayudarte a trabajar con clientes, productos, compras, ventas e inventario usando lenguaje natural.
-
-                    Puedes escribir una instrucción o tocar el micrófono para dictarla.
-                """.trimIndent()
-            )
-        )
-    }
-
-    var input by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
-    var backendStatus by remember { mutableStateOf("Sin verificar") }
-    var modelName by remember { mutableStateOf(localModelService.getLoadedModelName().orEmpty()) }
-    var modelReady by remember { mutableStateOf(localModelService.isInitialized()) }
-
-    var speechReady by remember { mutableStateOf(false) }
-    var speechStatus by remember { mutableStateOf("Voz no activada") }
-    var isRecording by remember { mutableStateOf(false) }
-    var partialSpeechText by remember { mutableStateOf("") }
-
-    fun refreshModelStatus() {
-        modelReady = localModelService.isInitialized()
-        modelName = localModelService.getLoadedModelName().orEmpty()
-    }
-
-    fun addMessage(role: String, content: String) {
-        messages.add(
-            ChatMessageUi(
-                role = role,
-                content = content
-            )
-        )
-    }
-
-    fun hasAudioPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    fun runAction(
-        userText: String,
-        showUserMessage: Boolean = true,
-        action: suspend () -> String
-    ) {
-        scope.launch {
-            try {
-                loading = true
-
-                if (showUserMessage) {
-                    addMessage("user", userText)
-                }
-
-                val result = action()
-
-                addMessage(
-                    role = "assistant",
-                    content = result.ifBlank {
-                        "No recibí una respuesta válida."
-                    }
-                )
-
-                refreshModelStatus()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (throwable: Throwable) {
-                addMessage(
-                    role = "assistant",
-                    content = """
-                        Ocurrió un error, pero la app pudo recuperarse.
-
-                        Detalle:
-                        ${throwable.message ?: throwable::class.java.simpleName}
-                    """.trimIndent()
-                )
-            } finally {
-                loading = false
-            }
-        }
-    }
-
-    fun sendMessage(messageToSend: String) {
-        val cleanMessage = messageToSend.trim()
-
-        if (cleanMessage.isBlank()) {
-            return
-        }
-
-        input = ""
-
-        runAction(cleanMessage) {
-            when {
-                cleanMessage.startsWith("/") -> {
-                    agentService.processUserMessage(cleanMessage)
-                }
-
-                cleanMessage.startsWith("{") -> {
-                    agentService.processUserMessage(cleanMessage)
-                }
-
-                localModelService.isInitialized() -> {
-                    agentService.processNaturalLanguageWithModel(
-                        userMessage = cleanMessage,
-                        localModelService = localModelService,
-                        maxSteps = 8
-                    )
-                }
-
-                else -> {
-                    """
-                    El modelo local no está inicializado.
-
-                    Pasos:
-                    1. Presiona “Modelo”.
-                    2. Selecciona tu archivo .litertlm.
-                    3. Presiona “Inicializar”.
-                    4. Vuelve a enviar tu instrucción.
-                    """.trimIndent()
-                }
-            }
-        }
-    }
-
-    fun clearChatAndAgent() {
-        messages.clear()
-        messages.add(
-            ChatMessageUi(
-                role = "assistant",
-                content = "Chat limpiado. Puedes escribir o grabar una nueva instrucción."
-            )
-        )
-
-        input = ""
-        partialSpeechText = ""
-        backendStatus = "Sin verificar"
-
-        if (isRecording) {
-            voskSpeechService.cancelListening()
-            isRecording = false
-        }
-
-        scope.launch {
-            try {
-                agentService.processUserMessage("/clear")
-            } catch (_: Exception) {
-            }
-        }
-    }
-
+    // ── Lanzador de permisos ─────────────────────────────────────────────────
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            speechStatus = "Preparando reconocimiento de voz..."
-
-            scope.launch {
-                voskSpeechService.initialize(
-                    context = context,
-                    onReady = {
-                        scope.launch {
-                            speechReady = true
-                            speechStatus = "Voz lista"
-                            addMessage("assistant", "Reconocimiento de voz listo. Toca el micrófono para hablar.")
-                        }
-                    },
-                    onError = { error ->
-                        scope.launch {
-                            speechReady = false
-                            speechStatus = "Error de voz"
-                            addMessage("assistant", error)
-                        }
-                    }
-                )
-            }
-        } else {
-            speechReady = false
-            speechStatus = "Permiso de micrófono denegado"
-            addMessage("assistant", "Necesito permiso de micrófono para grabar audio.")
+            viewModel.initializeSpeech()
         }
     }
 
-    fun prepareSpeechIfNeeded() {
+    fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+    fun onMicrophoneTap() {
         if (!hasAudioPermission()) {
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-
-        if (speechReady) {
+        if (!uiState.speechReady) {
+            viewModel.initializeSpeech()
             return
         }
-
-        speechStatus = "Preparando reconocimiento de voz..."
-
-        scope.launch {
-            voskSpeechService.initialize(
-                context = context,
-                onReady = {
-                    scope.launch {
-                        speechReady = true
-                        speechStatus = "Voz lista"
-                        addMessage("assistant", "Reconocimiento de voz listo. Toca el micrófono para hablar.")
-                    }
-                },
-                onError = { error ->
-                    scope.launch {
-                        speechReady = false
-                        speechStatus = "Error de voz"
-                        addMessage("assistant", error)
-                    }
-                }
-            )
-        }
+        viewModel.toggleRecording()
     }
 
-    fun startRecording() {
-        if (!hasAudioPermission()) {
-            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-
-        if (!speechReady) {
-            prepareSpeechIfNeeded()
-            return
-        }
-
-        if (isRecording) {
-            return
-        }
-
-        partialSpeechText = ""
-        isRecording = true
-        speechStatus = "Escuchando..."
-
-        voskSpeechService.startListening(
-            onPartialResult = { partial ->
-                scope.launch {
-                    partialSpeechText = partial
-                }
-            },
-            onFinalResult = { finalText ->
-                scope.launch {
-                    val cleanText = finalText.trim()
-
-                    isRecording = false
-                    speechStatus = "Voz lista"
-                    partialSpeechText = ""
-
-                    if (cleanText.isNotBlank()) {
-                        input = cleanText
-                        sendMessage(cleanText)
-                    } else {
-                        addMessage("assistant", "No pude reconocer el audio. Intenta hablar un poco más claro.")
-                    }
-                }
-            },
-            onError = { error ->
-                scope.launch {
-                    isRecording = false
-                    speechStatus = "Error de voz"
-                    partialSpeechText = ""
-                    addMessage("assistant", error)
-                }
-            }
-        )
-    }
-
-    fun stopRecording() {
-        if (!isRecording) {
-            return
-        }
-
-        speechStatus = "Procesando audio..."
-        voskSpeechService.stopListening()
-    }
-
-    fun toggleRecording() {
-        if (isRecording) {
-            stopRecording()
-        } else {
-            startRecording()
-        }
-    }
-
+    // ── Selector de archivo de modelo ────────────────────────────────────────
     val modelPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null) {
-            addMessage("assistant", "No se seleccionó ningún modelo.")
-            return@rememberLauncherForActivityResult
-        }
-
-        scope.launch {
-            try {
-                loading = true
-                addMessage("user", "Seleccionar modelo")
-
-                val file = ModelFileManager.copyModelToInternalStorage(
-                    context = context,
-                    uri = uri
-                )
-
-                refreshModelStatus()
-
-                addMessage(
-                    role = "assistant",
-                    content = buildString {
-                        appendLine("Modelo copiado correctamente.")
-                        appendLine()
-                        appendLine("Archivo:")
-                        appendLine(file.absolutePath)
-                        appendLine()
-                        appendLine("Ahora presiona “Inicializar”.")
-                    }
-                )
-            } catch (exception: Exception) {
-                addMessage(
-                    role = "assistant",
-                    content = "ERROR AL COPIAR MODELO:\n${exception.message}"
-                )
-            } finally {
-                loading = false
-            }
+        if (uri != null) {
+            viewModel.copyModel(uri)
         }
     }
 
+    // ── Desplazamiento automático al recibir mensaje ─────────────────────────
+    LaunchedEffect(uiState.messages.size) {
+        if (uiState.messages.isNotEmpty()) {
+            listState.animateScrollToItem(uiState.messages.lastIndex)
+        }
+    }
+
+    // ── Inicializar voz al arrancar (si ya tiene permiso) ────────────────────
     LaunchedEffect(Unit) {
-        prepareSpeechIfNeeded()
-    }
-
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+        if (hasAudioPermission() && !uiState.speechReady) {
+            viewModel.initializeSpeech()
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose {
-            localModelService.close()
-            voskSpeechService.release()
-        }
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // Interfaz de usuario
+    // ─────────────────────────────────────────────────────────────────────────
 
     Scaffold(
         topBar = {
@@ -439,15 +123,10 @@ fun ChatScreen() {
                             text = "ERP Agent Local",
                             style = MaterialTheme.typography.titleMedium
                         )
-
                         Text(
-                            text = speechStatus,
+                            text = uiState.speechStatus,
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (speechReady) {
-                                ErpColors.Success
-                            } else {
-                                ErpColors.TextMuted
-                            }
+                            color = if (uiState.speechReady) ErpColors.Success else ErpColors.TextMuted
                         )
                     }
                 },
@@ -470,22 +149,20 @@ fun ChatScreen() {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
+            // ── Tarjeta de estado ─────────────────────────────────────────────
             StatusCard(
-                modelReady = modelReady,
-                backendStatus = backendStatus,
-                toolsCount = loadedCatalog.count(),
-                modelName = modelName
+                modelReady = uiState.modelReady,
+                backendStatus = uiState.backendStatus,
+                toolsCount = uiState.toolsCount,
+                modelName = uiState.modelName
             )
 
+            // ── Botones de acción ─────────────────────────────────────────────
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = ErpColors.Surface
-                ),
-                elevation = CardDefaults.cardElevation(
-                    defaultElevation = 1.dp
-                )
+                colors = CardDefaults.cardColors(containerColor = ErpColors.Surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(12.dp),
@@ -503,45 +180,25 @@ fun ChatScreen() {
                     ) {
                         OutlinedButton(
                             modifier = Modifier.weight(1f),
-                            enabled = !loading && !isRecording,
+                            enabled = !uiState.loading && !uiState.isRecording,
                             onClick = {
                                 modelPickerLauncher.launch(
-                                    arrayOf(
-                                        "application/octet-stream",
-                                        "*/*"
-                                    )
+                                    arrayOf("application/octet-stream", "*/*")
                                 )
                             }
-                        ) {
-                            Text("Modelo")
-                        }
+                        ) { Text("Modelo") }
 
                         Button(
                             modifier = Modifier.weight(1f),
-                            enabled = !loading && !isRecording,
-                            onClick = {
-                                runAction("Inicializar modelo") {
-                                    val modelFile = ModelFileManager.getDefaultModelFile(context)
-
-                                    localModelService.initialize(
-                                        context = context,
-                                        modelFile = modelFile
-                                    )
-                                }
-                            }
-                        ) {
-                            Text("Inicializar")
-                        }
+                            enabled = !uiState.loading && !uiState.isRecording,
+                            onClick = { viewModel.initializeModel() }
+                        ) { Text("Inicializar") }
 
                         OutlinedButton(
                             modifier = Modifier.weight(1f),
-                            enabled = !loading,
-                            onClick = {
-                                clearChatAndAgent()
-                            }
-                        ) {
-                            Text("Limpiar")
-                        }
+                            enabled = !uiState.loading,
+                            onClick = { viewModel.clearChat() }
+                        ) { Text("Limpiar") }
                     }
 
                     Row(
@@ -550,30 +207,33 @@ fun ChatScreen() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            color = if (speechReady) ErpColors.SuccessSoft else ErpColors.WarningSoft,
+                            color = if (uiState.speechReady) ErpColors.SuccessSoft else ErpColors.WarningSoft,
                             shape = RoundedCornerShape(14.dp)
                         ) {
                             Text(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                text = if (speechReady) "Voz local lista" else "Voz pendiente",
+                                text = if (uiState.speechReady) "Voz local lista" else "Voz pendiente",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (speechReady) ErpColors.Success else ErpColors.Warning
+                                color = if (uiState.speechReady) ErpColors.Success else ErpColors.Warning
                             )
                         }
 
                         TextButton(
-                            enabled = !loading && !isRecording,
+                            enabled = !uiState.loading && !uiState.isRecording,
                             onClick = {
-                                prepareSpeechIfNeeded()
+                                if (!hasAudioPermission()) {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                } else {
+                                    viewModel.initializeSpeech()
+                                }
                             }
-                        ) {
-                            Text("Activar voz")
-                        }
+                        ) { Text("Activar voz") }
                     }
                 }
             }
 
-            if (loading) {
+            // ── Indicador de carga ────────────────────────────────────────────
+            if (uiState.loading) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center
@@ -582,6 +242,7 @@ fun ChatScreen() {
                 }
             }
 
+            // ── Lista de mensajes ─────────────────────────────────────────────
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
@@ -589,11 +250,12 @@ fun ChatScreen() {
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(messages) { message ->
+                items(uiState.messages) { message ->
                     MessageBubble(message = message)
                 }
             }
 
+            // ── Área de entrada ───────────────────────────────────────────────
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = ErpColors.Surface,
@@ -603,7 +265,8 @@ fun ChatScreen() {
                     modifier = Modifier.padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (isRecording || partialSpeechText.isNotBlank()) {
+                    // Indicador de grabación
+                    if (uiState.isRecording || uiState.partialSpeechText.isNotBlank()) {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             color = ErpColors.ErrorSoft,
@@ -611,10 +274,10 @@ fun ChatScreen() {
                         ) {
                             Text(
                                 modifier = Modifier.padding(12.dp),
-                                text = if (partialSpeechText.isBlank()) {
+                                text = if (uiState.partialSpeechText.isBlank()) {
                                     "Escuchando..."
                                 } else {
-                                    "Escuchando: $partialSpeechText"
+                                    "Escuchando: ${uiState.partialSpeechText}"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ErpColors.Error
@@ -622,6 +285,7 @@ fun ChatScreen() {
                         }
                     }
 
+                    // Campo de texto + botón de enviar/micrófono
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -629,14 +293,12 @@ fun ChatScreen() {
                     ) {
                         OutlinedTextField(
                             modifier = Modifier.weight(1f),
-                            value = input,
-                            onValueChange = { input = it },
-                            placeholder = {
-                                Text("Escribe o graba una instrucción")
-                            },
+                            value = uiState.input,
+                            onValueChange = { viewModel.updateInput(it) },
+                            placeholder = { Text("Escribe o graba una instrucción") },
                             minLines = 1,
                             maxLines = 4,
-                            enabled = !loading && !isRecording,
+                            enabled = !uiState.loading && !uiState.isRecording,
                             shape = RoundedCornerShape(24.dp)
                         )
 
@@ -644,26 +306,22 @@ fun ChatScreen() {
                             modifier = Modifier
                                 .size(54.dp)
                                 .background(
-                                    color = when {
-                                        isRecording -> ErpColors.Error
-                                        input.isNotBlank() -> ErpColors.Primary
-                                        else -> ErpColors.Primary
-                                    },
+                                    color = if (uiState.isRecording) ErpColors.Error else ErpColors.Primary,
                                     shape = CircleShape
                                 ),
-                            enabled = !loading,
+                            enabled = !uiState.loading,
                             onClick = {
-                                if (input.isNotBlank() && !isRecording) {
-                                    sendMessage(input)
+                                if (uiState.input.isNotBlank() && !uiState.isRecording) {
+                                    viewModel.sendMessage()
                                 } else {
-                                    toggleRecording()
+                                    onMicrophoneTap()
                                 }
                             }
                         ) {
                             Text(
                                 text = when {
-                                    isRecording -> "■"
-                                    input.isNotBlank() -> "➤"
+                                    uiState.isRecording -> "■"
+                                    uiState.input.isNotBlank() -> "➤"
                                     else -> "🎙"
                                 },
                                 color = Color.White,
@@ -672,25 +330,22 @@ fun ChatScreen() {
                         }
                     }
 
+                    // Texto de ayuda
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(
-                            enabled = !loading && input.isNotBlank() && !isRecording,
-                            onClick = {
-                                input = ""
-                            }
-                        ) {
-                            Text("Borrar")
-                        }
+                            enabled = !uiState.loading && uiState.input.isNotBlank() && !uiState.isRecording,
+                            onClick = { viewModel.updateInput("") }
+                        ) { Text("Borrar") }
 
                         Text(
                             text = when {
-                                isRecording -> "Toca ■ para detener"
-                                input.isNotBlank() -> "Toca ➤ para enviar"
-                                speechReady -> "Toca 🎙 para hablar"
+                                uiState.isRecording -> "Toca ■ para detener"
+                                uiState.input.isNotBlank() -> "Toca ➤ para enviar"
+                                uiState.speechReady -> "Toca 🎙 para hablar"
                                 else -> "Activa voz para dictar"
                             },
                             style = MaterialTheme.typography.bodySmall,

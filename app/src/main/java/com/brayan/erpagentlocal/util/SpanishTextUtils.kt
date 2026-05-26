@@ -1,0 +1,32 @@
+package com.brayan.erpagentlocal.util
+
+fun normalizeSpanishNumbers(text: String): String {
+    return text
+        .replace(Regex("(?i)\\bun[ao]\\b"), "1")
+        .replace(Regex("(?i)\\bdos\\b"), "2")
+        .replace(Regex("(?i)\\btres\\b"), "3")
+        .replace(Regex("(?i)\\bcuatro\\b"), "4")
+        .replace(Regex("(?i)\\bcinco\\b"), "5")
+        .replace(Regex("(?i)\\bseis\\b"), "6")
+        .replace(Regex("(?i)\\bsiete\\b"), "7")
+        .replace(Regex("(?i)\\bocho\\b"), "8")
+        .replace(Regex("(?i)\\bnueve\\b"), "9")
+        .replace(Regex("(?i)\\bdiez\\b"), "10")
+        .replace(Regex("(?i)\\bonce\\b"), "11")
+        .replace(Regex("(?i)\\bdoce\\b"), "12")
+        .replace(Regex("(?i)\\bquince\\b"), "15")
+        .replace(Regex("(?i)\\bveinte\\b"), "20")
+        .replace(Regex("(?i)\\btreinta\\b"), "30")
+        .replace(Regex("(?i)\\bcuarenta\\b"), "40")
+        .replace(Regex("(?i)\\bcincuenta\\b"), "50")
+        .replace(Regex("(?i)\\bsesenta\\b"), "60")
+        .replace(Regex("(?i)\\bsetenta\\b"), "70")
+        .replace(Regex("(?i)\\bochenta\\b"), "80")
+        .replace(Regex("(?i)\\bnoventa\\b"), "90")
+        .replace(Regex("(?i)\\bcien(?:to)?\\b"), "100")
+        .replace(Regex("(?i)\\bdoscien(?:tos|tas)?\\b"), "200")
+        .replace(Regex("(?i)\\btrescien(?:tos|tas)?\\b"), "300")
+        .replace(Regex("(?i)\\bcuatrocien(?:tos|tas)?\\b"), "400")
+        .replace(Regex("(?i)\\bquinien(?:tos|tas)?\\b"), "500")
+        .replace(Regex("(?i)\\bmil\\b"), "1000")
+}

@@ -110,6 +110,43 @@ class LocalModelService {
         return generateResult(prompt).getOrThrow()
     }
 
+    /**
+     * Crea una Conversation nueva en cada llamada para que la caché KV nunca
+     * acumule turnos no relacionados del bucle del agente. El Engine (pesos) se reutiliza
+     * — solo se reinicia la ventana de contexto.
+     *
+     * LiteRT-LM solo permite una Conversation activa por Engine a la vez.
+     * Se cierra la conversación almacenada antes de crear la nueva, y se cierra
+     * la nueva al terminar. Esto cumple con la restricción de sesión única.
+     */
+    suspend fun generateDecisionFresh(prompt: String): String {
+        return withContext(Dispatchers.IO) {
+            val activeEngine = engine
+            if (!initialized || activeEngine == null) {
+                throw IllegalStateException("El modelo local todavía no está inicializado.")
+            }
+
+            // Cierra la sesión existente — LiteRT-LM solo permite una a la vez.
+            try { conversation?.close() } catch (_: Exception) {}
+            conversation = null
+
+            val freshConversation = activeEngine.createConversation(
+                ConversationConfig(systemInstruction = Contents.of(currentSystemInstruction))
+            )
+
+            try {
+                val result = StringBuilder()
+                freshConversation
+                    .sendMessageAsync(prompt)
+                    .catch { throwable -> throw throwable }
+                    .collect { message -> result.append(message.toString()) }
+                result.toString().trim()
+            } finally {
+                try { freshConversation.close() } catch (_: Exception) {}
+            }
+        }
+    }
+
     suspend fun generateResult(prompt: String): ModelGenerationResult {
         return withContext(Dispatchers.IO) {
             if (!initialized) {

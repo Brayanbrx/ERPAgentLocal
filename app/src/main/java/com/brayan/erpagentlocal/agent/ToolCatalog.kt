@@ -79,6 +79,22 @@ class ToolCatalog(
                     requiredArguments = listOf("name")
                 ),
                 ToolDefinition(
+                    name = "listCustomers",
+                    operationId = "listCustomers",
+                    method = "GET",
+                    path = "/customers",
+                    description = "List all customers in the ERP.",
+                    requiredArguments = emptyList()
+                ),
+                ToolDefinition(
+                    name = "deleteCustomer",
+                    operationId = "deleteCustomer",
+                    method = "DELETE",
+                    path = "/customers/{customerId}",
+                    description = "Delete a customer by ID.",
+                    requiredArguments = listOf("customerId")
+                ),
+                ToolDefinition(
                     name = "createProduct",
                     operationId = "createProduct",
                     method = "POST",
@@ -94,6 +110,22 @@ class ToolCatalog(
                     path = "/products/search?name={name}",
                     description = "Search products by name.",
                     requiredArguments = listOf("name")
+                ),
+                ToolDefinition(
+                    name = "listProducts",
+                    operationId = "listProducts",
+                    method = "GET",
+                    path = "/products",
+                    description = "List all products in the ERP.",
+                    requiredArguments = emptyList()
+                ),
+                ToolDefinition(
+                    name = "deleteProduct",
+                    operationId = "deleteProduct",
+                    method = "DELETE",
+                    path = "/products/{productId}",
+                    description = "Delete a product by ID.",
+                    requiredArguments = listOf("productId")
                 ),
                 ToolDefinition(
                     name = "updateProduct",
@@ -117,6 +149,14 @@ class ToolCatalog(
                     path = "/inventory/{productId}",
                     description = "Get inventory by product ID.",
                     requiredArguments = listOf("productId")
+                ),
+                ToolDefinition(
+                    name = "listLowStock",
+                    operationId = "listLowStock",
+                    method = "GET",
+                    path = "/inventory/low-stock",
+                    description = "List all products with stock below their minimum threshold.",
+                    requiredArguments = emptyList()
                 ),
                 ToolDefinition(
                     name = "createPurchase",

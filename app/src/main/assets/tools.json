@@ -18,6 +18,24 @@
     "optionalArguments": []
   },
   {
+    "name": "listCustomers",
+    "operationId": "listCustomers",
+    "method": "GET",
+    "path": "/customers",
+    "description": "List all customers in the ERP.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "deleteCustomer",
+    "operationId": "deleteCustomer",
+    "method": "DELETE",
+    "path": "/customers/{customerId}",
+    "description": "Delete a customer by ID.",
+    "requiredArguments": ["customerId"],
+    "optionalArguments": []
+  },
+  {
     "name": "createProduct",
     "operationId": "createProduct",
     "method": "POST",
@@ -36,6 +54,24 @@
     "optionalArguments": []
   },
   {
+    "name": "listProducts",
+    "operationId": "listProducts",
+    "method": "GET",
+    "path": "/products",
+    "description": "List all products in the ERP.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "deleteProduct",
+    "operationId": "deleteProduct",
+    "method": "DELETE",
+    "path": "/products/{productId}",
+    "description": "Delete a product by ID.",
+    "requiredArguments": ["productId"],
+    "optionalArguments": []
+  },
+  {
     "name": "updateProduct",
     "operationId": "updateProduct",
     "method": "PATCH",
@@ -51,6 +87,15 @@
     "path": "/inventory/{productId}",
     "description": "Get inventory by product ID.",
     "requiredArguments": ["productId"],
+    "optionalArguments": []
+  },
+  {
+    "name": "listLowStock",
+    "operationId": "listLowStock",
+    "method": "GET",
+    "path": "/inventory/low-stock",
+    "description": "List all products with stock below their minimum threshold.",
+    "requiredArguments": [],
     "optionalArguments": []
   },
   {

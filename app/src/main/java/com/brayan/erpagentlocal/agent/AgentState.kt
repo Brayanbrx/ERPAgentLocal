@@ -5,6 +5,7 @@ data class AgentState(
     val lastCustomerName: String? = null,
     val lastProductId: String? = null,
     val lastProductName: String? = null,
+    val lastProductPurchasePrice: Double? = null,
     val lastSaleId: String? = null,
     val lastPurchaseId: String? = null,
     val lastInventoryStock: Int? = null,
@@ -24,11 +25,13 @@ data class AgentState(
 
     fun withProduct(
         productId: String?,
-        productName: String?
+        productName: String?,
+        purchasePrice: Double? = null
     ): AgentState {
         return copy(
             lastProductId = productId ?: lastProductId,
-            lastProductName = productName ?: lastProductName
+            lastProductName = productName ?: lastProductName,
+            lastProductPurchasePrice = purchasePrice ?: lastProductPurchasePrice
         )
     }
 
@@ -117,6 +120,7 @@ data class AgentState(
             appendLine("  \"lastCustomerName\": ${jsonStringOrNull(lastCustomerName)},")
             appendLine("  \"lastProductId\": ${jsonStringOrNull(lastProductId)},")
             appendLine("  \"lastProductName\": ${jsonStringOrNull(lastProductName)},")
+            appendLine("  \"lastProductPurchasePrice\": ${lastProductPurchasePrice?.toString() ?: "null"},")
             appendLine("  \"lastSaleId\": ${jsonStringOrNull(lastSaleId)},")
             appendLine("  \"lastPurchaseId\": ${jsonStringOrNull(lastPurchaseId)},")
             appendLine("  \"lastInventoryStock\": ${lastInventoryStock?.toString() ?: "null"},")
@@ -145,6 +149,7 @@ data class AgentState(
             appendLine("lastCustomerName: ${lastCustomerName ?: "none"}")
             appendLine("lastProductId: ${lastProductId ?: "none"}")
             appendLine("lastProductName: ${lastProductName ?: "none"}")
+            appendLine("lastProductPurchasePrice: ${lastProductPurchasePrice ?: "none"}")
             appendLine("lastSaleId: ${lastSaleId ?: "none"}")
             appendLine("lastPurchaseId: ${lastPurchaseId ?: "none"}")
             appendLine("lastInventoryStock: ${lastInventoryStock ?: "none"}")

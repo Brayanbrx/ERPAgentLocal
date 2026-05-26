@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.brayan.erpagentlocal.ui.theme.ErpColors
 
@@ -25,7 +26,8 @@ fun StatusCard(
     backendStatus: String,
     toolsCount: Int,
     modelName: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    backendOk: Boolean = backendStatus == "Online"
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -74,7 +76,12 @@ fun StatusCard(
             ) {
                 InfoBox(
                     title = "Backend",
-                    value = backendStatus.ifBlank { "Sin verificar" },
+                    value = backendStatus.ifBlank { "Verificando..." },
+                    valueColor = when {
+                        backendOk -> ErpColors.Success
+                        backendStatus == "Verificando..." -> ErpColors.TextMuted
+                        else -> ErpColors.Warning
+                    },
                     modifier = Modifier.weight(1f)
                 )
 
@@ -149,7 +156,8 @@ private fun StatusPill(
 private fun InfoBox(
     title: String,
     value: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    valueColor: Color = ErpColors.TextPrimary
 ) {
     Column(
         modifier = modifier
@@ -168,7 +176,7 @@ private fun InfoBox(
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
-            color = ErpColors.TextPrimary
+            color = valueColor
         )
     }
 }

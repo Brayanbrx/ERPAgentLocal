@@ -340,6 +340,28 @@ class ToolCallValidator(
                 ValidationResult.valid()
             }
 
+            "deleteCustomer" -> {
+                val customerId = arguments.optString("customerId").trim()
+                if (!isKnownCustomerId(customerId, state)) {
+                    ValidationResult.invalid(
+                        "El modelo intentó eliminar un cliente con customerId desconocido: $customerId. Primero debo buscar al cliente."
+                    )
+                } else {
+                    ValidationResult.valid()
+                }
+            }
+
+            "deleteProduct" -> {
+                val productId = arguments.optString("productId").trim()
+                if (!isKnownProductId(productId, state)) {
+                    ValidationResult.invalid(
+                        "El modelo intentó eliminar un producto con productId desconocido: $productId. Primero debo buscar el producto."
+                    )
+                } else {
+                    ValidationResult.valid()
+                }
+            }
+
             else -> ValidationResult.valid()
         }
     }
@@ -357,8 +379,8 @@ class ToolCallValidator(
         }
 
         if (repeatedSuccessfulCalls >= maxRepeatedSuccessfulCalls) {
-            return ValidationResult.invalid(
-                "Se detectó repetición de la misma tool exitosa: ${action.tool}. Se detuvo para evitar bucles."
+            return ValidationResult.alreadyDone(
+                "La acción '${action.tool}' ya fue ejecutada correctamente. La tarea está completada."
             )
         }
 
