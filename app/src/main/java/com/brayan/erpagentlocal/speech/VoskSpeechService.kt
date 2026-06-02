@@ -12,21 +12,38 @@ import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
 
+/**
+ * Servicio de reconocimiento de voz local basado en Vosk
+ *
+ * Centraliza la carga del modelo, el ciclo de vida del microfono y la entrega
+ * de resultados parciales y finales para que la capa de UI no dependa de los
+ * detalles propios del SDK de Vosk
+ */
 class VoskSpeechService {
 
-    private var model: Model? = null
+    private var model: Model? = null        
     private var recognizer: Recognizer? = null
     private var speechService: SpeechService? = null
 
+    // Banderas compartidas entre callbacks de Vosk y llamadas de la aplicación
     @Volatile private var initialized = false
     @Volatile private var recording = false
 
-    // Protege contra el doble disparo de Vosk: tanto onResult como onFinalResult pueden
-    // dispararse al llamar stop(), por eso el callback se entrega una sola vez por sesión.
+    /*
+     * Protege contra entregas duplicadas: Vosk puede invocar onResult y
+     * onFinalResult durante el cierre de una misma sesión de escucha
+     */
     @Volatile private var resultDelivered = false
     @Volatile private var lastPartialText = ""
-    @Volatile private var lastResultText = ""   // acumulado de llamadas intermedias a onResult
+    @Volatile private var lastResultText = ""
 
+    /**
+     * Carga el modelo local de Vosk desde los assets hacia el almacenamiento interno
+     *
+     * La operación se ejecuta en un dispatcher de entrada/salida porque puede
+     * desempaquetar archivos grandes. Si el modelo ya está cargado, responde
+     * inmediatamente mediante [onReady].
+     */
     suspend fun initialize(
         context: Context,
         onReady: () -> Unit,
@@ -36,7 +53,6 @@ class VoskSpeechService {
             onReady()
             return
         }
-
         withContext(Dispatchers.IO) {
             val startedAtMs = System.currentTimeMillis()
             try {
@@ -47,6 +63,8 @@ class VoskSpeechService {
                     { unpackedModel ->
                         model = unpackedModel
                         initialized = true
+
+                        // metricas de rendimiento
                         PerformanceTracker.record(
                             PerformanceEvent.VOSK_LOAD_MS,
                             System.currentTimeMillis() - startedAtMs
@@ -71,6 +89,13 @@ class VoskSpeechService {
         }
     }
 
+    /**
+     * Inicia una sesión de escucha desde el micrófono
+     *
+     * Entrega transcripciones parciales mientras el usuario habla y una unica
+     * transcripción final cuando la sesión se detiene, llega a timeout o Vosk
+     * confirma el cierre del audio.
+     */
     fun startListening(
         onPartialResult: (String) -> Unit,
         onFinalResult: (String) -> Unit,
@@ -86,13 +111,13 @@ class VoskSpeechService {
         if (recording) return
 
         try {
-            // Libera la sesión anterior antes de iniciar una nueva
+            // Libera cualquier sesión anterior antes de crear un recognizer nuevo
             try { speechService?.stop(); speechService?.shutdown() } catch (_: Exception) {}
             try { recognizer?.close() } catch (_: Exception) {}
             speechService = null
             recognizer = null
 
-            // Reinicia el estado por sesión
+            // Reinicia el estado acumulado de la sesión actual
             resultDelivered = false
             lastPartialText = ""
             lastResultText = ""
@@ -113,9 +138,11 @@ class VoskSpeechService {
                     }
                 }
 
-                // onResult se dispara cuando Vosk detecta silencio y confirma una frase.
-                // Acumulamos el texto aquí pero NO entregamos el callback final —
-                // eso lo maneja exclusivamente onFinalResult para evitar envíos dobles.
+                /*
+                 * onResult se dispara cuando Vosk detecta silencio y confirma
+                 * una frase. Se acumula el texto, pero el callback final se
+                 * reserva para onFinalResult u onTimeout
+                 */
                 override fun onResult(hypothesis: String?) {
                     val text = extractText(hypothesis)
                     if (text.isNotBlank()) {
@@ -124,8 +151,6 @@ class VoskSpeechService {
                     }
                 }
 
-                // onFinalResult se dispara al llamar stop(). Es el único punto
-                // donde entregamos la transcripción completa a la app.
                 override fun onFinalResult(hypothesis: String?) {
                     if (resultDelivered) return
 
@@ -186,6 +211,7 @@ class VoskSpeechService {
         }
     }
 
+    // Detiene la escucha activa y permite que Vosk emita el resultado final
     fun stopListening() {
         try {
             speechService?.stop()
@@ -193,20 +219,28 @@ class VoskSpeechService {
         recording = false
     }
 
+    /**
+     * Cancela la escucha actual descartando resultados parciales o tardíos
+     * Debe usarse cuando la interacción se abandona y no se quiere enviar una
+     * transcripción final a la aplicación
+     */
     fun cancelListening() {
         try {
             speechService?.cancel()
         } catch (_: Exception) {}
-        // Marca como entregado para ignorar callbacks tardíos de Vosk
+        // Ignora callbacks tardíos que puedan llegar después de cancelar.
         resultDelivered = true
         recording = false
         lastPartialText = ""
         lastResultText = ""
     }
 
-    fun isInitialized() = initialized
-    fun isRecording() = recording
+    fun isInitialized() = initialized   // Indica si el modelo local ya fue cargado correctamente.
+    fun isRecording() = recording       // Indica si existe una sesión de escucha activa.
 
+    /**
+     * Libera el micrófono, el recognizer y el modelo de Vosk
+     */
     fun release() {
         try {
             speechService?.stop()
@@ -223,6 +257,11 @@ class VoskSpeechService {
         recording = false
     }
 
+    /**
+     * Extrae el texto reconocido desde las respuestas JSON emitidas por Vosk
+     * Vosk puede devolver el contenido en la clave "text" para resultados
+     * confirmados o en "partial" para resultados provisionales
+     */
     private fun extractText(rawJson: String?): String {
         if (rawJson.isNullOrBlank()) return ""
         return try {

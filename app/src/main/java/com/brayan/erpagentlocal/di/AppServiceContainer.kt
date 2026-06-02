@@ -15,7 +15,7 @@ class AppServiceContainer private constructor(context: Context) {
 
     val agentService: AgentService = AgentService()
     val localModelService: LocalModelService = LocalModelService()
-    val voskSpeechService: VoskSpeechService = VoskSpeechService()
+    val voskSpeechService: VoskSpeechService = VoskSpeechService() // Unica instancia del servicio de vosk
     val backendHealthMonitor: BackendHealthMonitor = BackendHealthMonitor(appContext)
     val modelProvisioningManager: ModelProvisioningManager = ModelProvisioningManager(appContext)
     val metricsStore: MetricsStore = MetricsStore(appContext)

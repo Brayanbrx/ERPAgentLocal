@@ -70,8 +70,7 @@ data class ChatUiState(
 )
 
 /**
- * Contiene toda la logica de negocio de la pantalla de chat.
- * Los servicios viven aqui para sobrevivir cambios de configuracion.
+ * Contiene toda la logica de negocio de la pantalla de chat
  */
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -80,7 +79,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val agentService = services.agentService
     private val localModelService = services.localModelService
-    private val voskSpeechService = services.voskSpeechService
+    private val voskSpeechService = services.voskSpeechService // Servicio de Audio Local 
     private val speechTextNormalizer = SpeechTextNormalizer()
     private val backendHealthMonitor = services.backendHealthMonitor
     private val modelProvisioningManager = services.modelProvisioningManager

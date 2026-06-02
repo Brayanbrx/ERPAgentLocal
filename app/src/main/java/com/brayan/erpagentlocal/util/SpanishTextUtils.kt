@@ -53,7 +53,7 @@ fun normalizeSpanishNumbers(text: String): String {
             } else {
                 0
             }
-            (hundreds + tens + units).toString()
+            (hundreds + tens + units).toString() // se suma luego de detectar :D
         }
         .replace(Regex("(?i)\\b(cien(?:to)?|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil)\\b")) { match ->
             spanishNumberWords[match.groupValues[1].lowercase()]?.toString() ?: match.value
