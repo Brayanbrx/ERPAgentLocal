@@ -1,0 +1,225 @@
+[
+  {
+    "name": "checkHealth",
+    "operationId": "checkHealth",
+    "method": "GET",
+    "path": "/health",
+    "description": "Verifica que el backend serverless esté funcionando.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "createCustomer",
+    "operationId": "createCustomer",
+    "method": "POST",
+    "path": "/customers",
+    "description": "Crea un cliente en el ERP.",
+    "requiredArguments": [
+      "firstName",
+      "lastName"
+    ],
+    "optionalArguments": [
+      "phone",
+      "email"
+    ]
+  },
+  {
+    "name": "listCustomers",
+    "operationId": "listCustomers",
+    "method": "GET",
+    "path": "/customers",
+    "description": "Lista clientes registrados.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "searchCustomer",
+    "operationId": "searchCustomer",
+    "method": "GET",
+    "path": "/customers/search?name={name}",
+    "description": "Busca clientes por nombre o apellido.",
+    "requiredArguments": [
+      "name"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "updateCustomer",
+    "operationId": "updateCustomer",
+    "method": "PATCH",
+    "path": "/customers/{customerId}",
+    "description": "Actualiza parcialmente los datos de un cliente.",
+    "requiredArguments": [
+      "customerId"
+    ],
+    "optionalArguments": [
+      "firstName",
+      "lastName",
+      "phone",
+      "email"
+    ]
+  },
+  {
+    "name": "deleteCustomer",
+    "operationId": "deleteCustomer",
+    "method": "DELETE",
+    "path": "/customers/{customerId}",
+    "description": "Desactiva un cliente usando borrado lógico.",
+    "requiredArguments": [
+      "customerId"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "createProduct",
+    "operationId": "createProduct",
+    "method": "POST",
+    "path": "/products",
+    "description": "Crea un producto en el ERP.",
+    "requiredArguments": [
+      "name",
+      "salePrice",
+      "purchasePrice"
+    ],
+    "optionalArguments": [
+      "description",
+      "unit"
+    ]
+  },
+  {
+    "name": "listProducts",
+    "operationId": "listProducts",
+    "method": "GET",
+    "path": "/products",
+    "description": "Lista productos registrados.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "searchProduct",
+    "operationId": "searchProduct",
+    "method": "GET",
+    "path": "/products/search?name={name}",
+    "description": "Busca productos por nombre.",
+    "requiredArguments": [
+      "name"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "updateProduct",
+    "operationId": "updateProduct",
+    "method": "PATCH",
+    "path": "/products/{productId}",
+    "description": "Actualiza parcialmente los datos de un producto.",
+    "requiredArguments": [
+      "productId"
+    ],
+    "optionalArguments": [
+      "name",
+      "description",
+      "unit",
+      "salePrice",
+      "purchasePrice"
+    ]
+  },
+  {
+    "name": "deleteProduct",
+    "operationId": "deleteProduct",
+    "method": "DELETE",
+    "path": "/products/{productId}",
+    "description": "Desactiva un producto usando borrado lógico.",
+    "requiredArguments": [
+      "productId"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "getInventory",
+    "operationId": "getInventory",
+    "method": "GET",
+    "path": "/inventory/{productId}",
+    "description": "Consulta el inventario de un producto.",
+    "requiredArguments": [
+      "productId"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "listLowStock",
+    "operationId": "listLowStock",
+    "method": "GET",
+    "path": "/inventory/low-stock",
+    "description": "Lista productos con stock bajo.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "createInventoryAdjustment",
+    "operationId": "createInventoryAdjustment",
+    "method": "POST",
+    "path": "/inventory/adjustments",
+    "description": "Crea un ajuste manual de inventario.",
+    "requiredArguments": [
+      "productId",
+      "quantity",
+      "type",
+      "reason"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "createPurchase",
+    "operationId": "createPurchase",
+    "method": "POST",
+    "path": "/purchases",
+    "description": "Registra una compra, aumenta inventario y crea movimiento de inventario tipo PURCHASE.",
+    "requiredArguments": [
+      "productId",
+      "quantity",
+      "unitCost"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "listPurchases",
+    "operationId": "listPurchases",
+    "method": "GET",
+    "path": "/purchases",
+    "description": "Lista compras registradas.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "createSale",
+    "operationId": "createSale",
+    "method": "POST",
+    "path": "/sales",
+    "description": "Registra una venta, descuenta inventario y crea movimiento de inventario tipo SALE.",
+    "requiredArguments": [
+      "customerId",
+      "items"
+    ],
+    "optionalArguments": []
+  },
+  {
+    "name": "listSales",
+    "operationId": "listSales",
+    "method": "GET",
+    "path": "/sales",
+    "description": "Lista ventas registradas.",
+    "requiredArguments": [],
+    "optionalArguments": []
+  },
+  {
+    "name": "listSalesByCustomer",
+    "operationId": "listSalesByCustomer",
+    "method": "GET",
+    "path": "/sales/by-customer/{customerId}",
+    "description": "Lista ventas de un cliente.",
+    "requiredArguments": [
+      "customerId"
+    ],
+    "optionalArguments": []
+  }
+]

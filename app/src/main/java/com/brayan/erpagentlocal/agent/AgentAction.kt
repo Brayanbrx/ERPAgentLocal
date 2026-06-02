@@ -9,6 +9,10 @@ sealed class AgentAction {
         val arguments: JSONObject
     ) : AgentAction()
 
+    data class ToolQueue(
+        val actions: List<ToolCall>
+    ) : AgentAction()
+
     data class AskUser(
         val message: String
     ) : AgentAction()

@@ -1,6 +1,5 @@
 package com.brayan.erpagentlocal.agent
 
-import org.json.JSONArray
 import org.json.JSONObject
 
 object AgentErrorMapper {
@@ -91,30 +90,6 @@ object AgentErrorMapper {
         }
     }
 
-    fun fromInvalidJson(
-        rawOutput: String,
-        error: String
-    ): AgentError {
-        return AgentError(
-            type = AgentErrorType.INVALID_JSON,
-            technicalMessage = "$error\n\nRaw output:\n$rawOutput",
-            userMessage = "No pude interpretar la acción del modelo. Intenta escribir la instrucción de forma más específica.",
-            statusCode = null,
-            canRetry = true,
-            shouldAskUser = true
-        )
-    }
-
-    fun fromModelNotReady(): AgentError {
-        return AgentError(
-            type = AgentErrorType.MODEL_NOT_READY,
-            technicalMessage = "Local model is not initialized.",
-            userMessage = "El modelo local todavía no está inicializado. Selecciona el archivo .litertlm y presiona “Inicializar”.",
-            canRetry = true,
-            shouldAskUser = false
-        )
-    }
-
     fun fromException(
         exception: Exception
     ): AgentError {
@@ -127,41 +102,6 @@ object AgentErrorMapper {
             canRetry = true,
             shouldAskUser = false
         )
-    }
-
-    fun isEmptySearchResult(
-        toolName: String,
-        response: JSONObject
-    ): Boolean {
-        if (toolName != "searchProduct" && toolName != "searchCustomer") {
-            return false
-        }
-
-        if (!response.optBoolean("success", false)) {
-            return false
-        }
-
-        val data = response.opt("data")
-
-        return when (data) {
-            is JSONArray -> data.length() == 0
-            null -> true
-            JSONObject.NULL -> true
-            else -> false
-        }
-    }
-
-    fun emptySearchMessage(
-        toolName: String,
-        arguments: JSONObject
-    ): String {
-        val name = arguments.optString("name", "solicitado")
-
-        return when (toolName) {
-            "searchProduct" -> "No encontré el producto \"$name\". ¿Deseas crearlo primero?"
-            "searchCustomer" -> "No encontré el cliente \"$name\". ¿Deseas crearlo primero?"
-            else -> "No encontré el recurso solicitado."
-        }
     }
 
     private fun buildNotFoundUserMessage(

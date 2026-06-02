@@ -11,15 +11,8 @@ object ToolRegistry {
 
     private var catalog: ToolCatalog = ToolCatalog.default()
 
-    val tools: List<ToolDefinition>
-        get() = catalog.getAll()
-
     fun setCatalog(newCatalog: ToolCatalog) {
         catalog = newCatalog
-    }
-
-    fun getCatalog(): ToolCatalog {
-        return catalog
     }
 
     fun exists(toolName: String): Boolean {
@@ -32,14 +25,6 @@ object ToolRegistry {
 
     fun describeTools(): String {
         return catalog.describeTools()
-    }
-
-    fun describeToolsForPrompt(): String {
-        return catalog.describeToolsForPrompt()
-    }
-
-    fun getAllTools(): List<ToolDefinition> {
-        return catalog.getAll()
     }
 
     fun count(): Int {

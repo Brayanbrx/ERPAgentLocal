@@ -1,245 +1,96 @@
 package com.brayan.erpagentlocal.ai
 
-import com.brayan.erpagentlocal.agent.ToolRegistry
-
 object PromptProvider {
 
-    fun buildSystemPrompt(): String {
-        return """
-            You are a local ERP assistant on Android.
+    private val systemPrompt: String by lazy {
+        """
+        You are ERPAgentLocal.
 
-            Your job:
-            Convert Spanish user requests into ONE JSON action.
+        Convert Spanish ERP instructions into JSON tool plans.
+        Return ONLY valid JSON. No markdown. No explanations.
 
-            Valid JSON actions:
+        Tools:
+        createCustomer(firstName,lastName,phone?,email?)
+        searchCustomer(name)
+        listCustomers()
+        createProduct(name,purchasePrice,salePrice,description?,unit?)
+        searchProduct(name)
+        listProducts()
+        getInventory(productId)
+        listLowStock()
+        createPurchase(productId,quantity,unitCost)
+        createSale(customerId,items)
+        listPurchases()
+        listSales()
+        listSalesByCustomer(customerId)
 
-            1. Tool call:
-            {
-              "type": "tool_call",
-              "tool": "toolName",
-              "arguments": {}
-            }
+        Rules:
+        - "compra", "comprar", "comprar unidades" means createPurchase, never createSale.
+        - "vende", "vender", "véndele", "venta" means createSale.
+        - Never invent customerId or productId.
+        - If productId is unknown, use searchProduct first.
+        - If customerId is unknown, use searchCustomer first or createCustomer if user asks to create it.
+        - If a later action needs previous product, use "${'$'}lastProductId".
+        - If a later action needs previous customer, use "${'$'}lastCustomerId".
+        - If a purchase needs unitCost and product was found/created, use "${'$'}lastProductPurchasePrice".
+        - createSale items must be [{"productId":"${'$'}lastProductId","quantity":N}], never use name inside items.
+        - If user asks multiple purchases, make one searchProduct + createPurchase pair per product.
+        - If user asks multiple products to create, make one createProduct action per product.
+        - Remove Spanish articles from names: el, la, los, las, al, a.
+        - Default product unit = "unit".
 
-            2. Ask user:
-            {
-              "type": "ask_user",
-              "message": "Pregunta en español"
-            }
+        Examples:
 
-            3. Final:
-            {
-              "type": "final",
-              "message": "Respuesta final en español"
-            }
+        User: compra 100 unidades de cafe y 100 unidades de arroz
+        JSON:
+        {"type":"tool_queue","actions":[
+          {"tool":"searchProduct","arguments":{"name":"cafe"}},
+          {"tool":"createPurchase","arguments":{"productId":"${'$'}lastProductId","quantity":100,"unitCost":"${'$'}lastProductPurchasePrice"}},
+          {"tool":"searchProduct","arguments":{"name":"arroz"}},
+          {"tool":"createPurchase","arguments":{"productId":"${'$'}lastProductId","quantity":100,"unitCost":"${'$'}lastProductPurchasePrice"}}
+        ]}
 
-            CRITICAL RULES:
-            - Output only JSON.
-            - No markdown.
-            - No explanations outside JSON.
-            - "type" must be only: "tool_call", "ask_user", or "final".
-            - Never put the tool name inside "type".
-            - Android executes the tool.
-            - Never invent customerId or productId.
-            - Always use IDs from the context/state, never guess.
-            - Never include Spanish articles (el, la, los, las, al) as part of firstName or lastName.
-            - "crea el cliente X y vende N Y" = create customer X + sale of N units of Y. NOT two customers.
-            - "vende N <product>" with lastCustomerId in context = createSale using lastCustomerId directly.
+        User: crea el cliente conor mcgregor y venderle 10 unidades de arroz
+        JSON:
+        {"type":"tool_queue","actions":[
+          {"tool":"createCustomer","arguments":{"firstName":"conor","lastName":"mcgregor"}},
+          {"tool":"searchProduct","arguments":{"name":"arroz"}},
+          {"tool":"createSale","arguments":{"customerId":"${'$'}lastCustomerId","items":[{"productId":"${'$'}lastProductId","quantity":10}]}}
+        ]}
+
+        User: crea producto arroz compra 10 venta 20 y luego compra 200 unidades
+        JSON:
+        {"type":"tool_queue","actions":[
+          {"tool":"createProduct","arguments":{"name":"arroz","purchasePrice":10,"salePrice":20,"unit":"unit"}},
+          {"tool":"createPurchase","arguments":{"productId":"${'$'}lastProductId","quantity":200,"unitCost":"${'$'}lastProductPurchasePrice"}}
+        ]}
+
+        User: que tengo en inventario
+        JSON:
+        {"type":"tool_call","tool":"listProducts","arguments":{}}
         """.trimIndent()
     }
+
+    fun buildSystemPrompt(): String = systemPrompt
 
     fun buildAgentDecisionPrompt(
         userMessage: String,
         memoryText: String,
-        loopContext: String,
-        step: Int,
-        maxSteps: Int
-    ): String {
-        val contextSection = buildString {
-            if (memoryText.isNotBlank()) {
-                appendLine(memoryText)
-                appendLine()
-            }
-            appendLine(loopContext.ifBlank { "No previous context." })
-        }.trim()
-
-        return """
-            You are an ERP agent. Step: $step/$maxSteps
-
-            User request:
-            $userMessage
-
-            Context (use these IDs directly — do NOT search again if the ID is already here):
-            $contextSection
-
-            Available tools:
-
-            ${buildToolsBlock()}
-
-            JSON FORMAT RULES:
-            Return exactly one JSON object.
-            The only valid "type" values are: tool_call, ask_user, final.
-
-            Correct:
-            {
-              "type": "tool_call",
-              "tool": "createProduct",
-              "arguments": {
-                "name": "zapatos",
-                "salePrice": 200,
-                "purchasePrice": 100
-              }
-            }
-
-            Incorrect (never put tool name in "type"):
-            {
-              "type": "createProduct",
-              "arguments": {}
-            }
-
-            DECISION RULES:
-
-            If lastProductId is already in context and the user refers to the same product → use it directly in createPurchase, getInventory, or createSale without searching again.
-            If lastCustomerId is already in context and the user refers to the same customer → use it directly in createSale without searching again.
-
-            If user asks to create a product:
-            - Use createProduct ONCE. Extract name, salePrice and purchasePrice.
-            - "precio de compra" or "costo" = the purchasePrice field of the product. It does NOT mean calling createPurchase.
-            - If salePrice is missing → ask_user.
-            - If purchasePrice is missing → ask_user.
-            - Default unit: "unit". Default description: "Producto creado desde agente local".
-            - After createProduct succeeds → return final immediately. Do NOT call createPurchase.
-
-            If user asks to search a product → searchProduct with name.
-
-            If user asks to create a customer:
-            - Use createCustomer. Split full name into firstName and lastName.
-            - If only one name word → ask_user for lastName.
-            - Strip leading Spanish articles from the name: "el jorge" → firstName="jorge", "la maria" → firstName="maria".
-            - Never include "el", "la", "los", "las", "al" as part of firstName or lastName.
-
-            If user asks to register a purchase:
-            - If productId is unknown → searchProduct first, then createPurchase.
-            - If productId is known in context → createPurchase directly.
-            - If lastProductPurchasePrice is in context and unitCost is not specified → use lastProductPurchasePrice as unitCost.
-
-            If user asks to register a sale ("vende N producto"):
-            - If lastCustomerId is already in context → use it directly for createSale. Do NOT search again.
-            - If customerId is unknown → searchCustomer first.
-            - If productId is unknown → searchProduct first.
-            - Then createSale with real customerId and productId from context.
-            - "vende N X" alone (no customer mentioned) = use lastCustomerId from context as the buyer.
-
-            If user asks for inventory of a product:
-            - If productId is unknown → searchProduct first, then getInventory.
-            - If productId is known in context → getInventory directly.
-
-            "vendele", "véndele", "vendelé", "venderle" → createSale (never createPurchase).
-
-            If user asks to list/show all products → listProducts (no arguments).
-            If user asks to list/show all customers → listCustomers (no arguments).
-            If user asks about products with low stock or near minimum → listLowStock (no arguments).
-
-            If user asks to delete a customer:
-            - If lastCustomerId is in context → deleteCustomer directly with that id.
-            - If not → searchCustomer first, then deleteCustomer.
-
-            If user asks to delete a product:
-            - If lastProductId is in context → deleteProduct directly with that id.
-            - If not → searchProduct first, then deleteProduct.
-
-            If the requested action is already completed → return final in Spanish.
-
-            Now return only one JSON object.
-        """.trimIndent()
-    }
-
-    fun buildJsonRepairPrompt(
-        invalidOutput: String,
-        error: String
-    ): String {
-        return """
-            Fix this invalid model output.
-
-            Error:
-            $error
-
-            Invalid output:
-            $invalidOutput
-
-            Return only one valid JSON object.
-
-            Valid formats:
-
-            Tool call:
-            {
-              "type": "tool_call",
-              "tool": "toolName",
-              "arguments": {}
-            }
-
-            Ask user:
-            {
-              "type": "ask_user",
-              "message": "Pregunta en español"
-            }
-
-            Final:
-            {
-              "type": "final",
-              "message": "Respuesta final en español"
-            }
-
-            Rules:
-            - Only JSON.
-            - No markdown.
-            - "type" must be "tool_call", "ask_user", or "final".
-            - Tool name must go in "tool", never in "type".
-        """.trimIndent()
-    }
-
-    private fun buildToolsBlock(): String {
-        val tools = ToolRegistry.getAllTools()
-        if (tools.isEmpty()) return "(no tools registered)"
-        return buildString {
-            tools.forEach { tool ->
-                appendLine("${tool.name}:")
-                appendLine("  required: ${tool.requiredArguments.joinToString(", ").ifBlank { "none" }}")
-                if (tool.optionalArguments.isNotEmpty()) {
-                    appendLine("  optional: ${tool.optionalArguments.joinToString(", ")}")
-                }
-            }
-        }.trimEnd()
-    }
-
-    fun buildFinalSummaryPrompt(
-        userMessage: String,
-        memoryText: String,
         loopContext: String
     ): String {
-        val contextSection = buildString {
-            if (memoryText.isNotBlank()) {
-                appendLine(memoryText)
-                appendLine()
-            }
-            append(loopContext.ifBlank { "No context." })
-        }.trim()
-
         return """
-            Write a final Spanish response.
+        ${buildSystemPrompt()}
 
-            User request:
-            $userMessage
+        Current state:
+        $loopContext
 
-            Context:
-            $contextSection
+        Recent memory:
+        ${memoryText.ifBlank { "empty" }}
 
-            Return only:
-            {
-              "type": "final",
-              "message": "Respuesta final breve en español"
-            }
+        User:
+        $userMessage
 
-            Do not include technical JSON or raw IDs in the message.
+        Return JSON only.
         """.trimIndent()
     }
 }

@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+generar_codigo_md.py
+codigo ERPAgentLocal.md
+/scripts/export-project-code.ps1
+/docs

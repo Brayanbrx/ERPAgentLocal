@@ -1,14 +1,11 @@
 package com.brayan.erpagentlocal.data
 
+import com.brayan.erpagentlocal.BuildConfig
+
 object ApiConfig {
 
-    const val BASE_URL = "https://qnphwupj51.execute-api.us-east-1.amazonaws.com/Prod"
+    val BASE_URL: String = BuildConfig.SERVERLESS_BASE_URL
 
-    const val CUSTOMERS = "/customers"
-    const val PRODUCTS = "/products"
-    const val PURCHASES = "/purchases"
-    const val SALES = "/sales"
-    const val INVENTORY = "/inventory"
     const val HEALTH = "/health"
 
     const val DEFAULT_CONNECT_TIMEOUT_SECONDS = 20L
@@ -20,9 +17,5 @@ object ApiConfig {
         val cleanPath = path.trimStart('/')
 
         return "$cleanBaseUrl/$cleanPath"
-    }
-
-    fun getProductionBaseUrl(): String {
-        return BASE_URL
     }
 }

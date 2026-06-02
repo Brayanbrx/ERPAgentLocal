@@ -5,22 +5,15 @@ import com.brayan.erpagentlocal.agent.AgentErrorMapper
 import com.brayan.erpagentlocal.agent.ToolDefinition
 import com.brayan.erpagentlocal.agent.ToolExecutionResult
 import com.brayan.erpagentlocal.agent.ToolRegistry
-import org.json.JSONArray
+import com.brayan.erpagentlocal.metrics.PerformanceEvent
+import com.brayan.erpagentlocal.metrics.PerformanceTracker
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.Normalizer
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class ToolExecutor(
     private val apiClient: AgentApiClient = AgentApiClient()
 ) {
-
-    suspend fun execute(action: AgentAction.ToolCall): String {
-        val response = executeRaw(action)
-        return formatJson("TOOL EJECUTADA: ${action.tool}", response)
-    }
 
     suspend fun executeRaw(action: AgentAction.ToolCall): JSONObject {
         return executeToolCall(action).toJsonObject()
@@ -86,6 +79,7 @@ class ToolExecutor(
                 .takeIf { it > 0 }
 
             if (success) {
+                PerformanceTracker.increment(PerformanceEvent.TOOL_SUCCESS_COUNT)
                 ToolExecutionResult.success(
                     toolName = toolDefinition.name,
                     message = message,
@@ -93,6 +87,7 @@ class ToolExecutor(
                     statusCode = statusCode
                 )
             } else {
+                PerformanceTracker.increment(PerformanceEvent.TOOL_ERROR_COUNT)
                 val mappedError = AgentErrorMapper.fromHttpResponse(
                     response = response,
                     toolName = toolDefinition.name
@@ -109,6 +104,7 @@ class ToolExecutor(
                 )
             }
         } catch (exception: Exception) {
+            PerformanceTracker.increment(PerformanceEvent.TOOL_ERROR_COUNT)
             val mappedError = AgentErrorMapper.fromException(exception)
 
             val errorResponse = JSONObject()
@@ -125,140 +121,6 @@ class ToolExecutor(
                 statusCode = 0,
                 error = mappedError.technicalMessage
             )
-        }
-    }
-
-    suspend fun checkHealth(): String {
-        val response = apiClient.get(ApiConfig.HEALTH)
-        return formatJson("HEALTH", response)
-    }
-
-    suspend fun pingBackend(): String {
-        return try {
-            val response = apiClient.get(ApiConfig.HEALTH)
-            if (response.optBoolean("success", false)) "Online" else "Sin conexión"
-        } catch (_: Exception) {
-            "Sin conexión"
-        }
-    }
-
-    suspend fun runFullErpDemo(): String {
-        val code = generateCode()
-
-        val customerResponse = executeRaw(
-            AgentAction.ToolCall(
-                tool = "createCustomer",
-                arguments = JSONObject()
-                    .put("firstName", "Juan")
-                    .put("lastName", "Perez $code")
-                    .put("phone", "70000000")
-                    .put("email", "juan$code@email.com")
-            )
-        )
-
-        val customerId = customerResponse
-            .optJSONObject("data")
-            ?.optString("customerId")
-            .orEmpty()
-
-        if (customerId.isBlank()) {
-            return buildString {
-                appendLine("DEMO ERP DETENIDA")
-                appendLine()
-                appendLine("No se pudo crear el cliente.")
-                appendLine(customerResponse.toString(2))
-            }
-        }
-
-        val productResponse = executeRaw(
-            AgentAction.ToolCall(
-                tool = "createProduct",
-                arguments = JSONObject()
-                    .put("name", "Azucar Demo $code")
-                    .put("description", "Bolsa de azucar 1kg")
-                    .put("unit", "unit")
-                    .put("salePrice", 20)
-                    .put("purchasePrice", 15)
-            )
-        )
-
-        val productId = productResponse
-            .optJSONObject("data")
-            ?.optString("productId")
-            .orEmpty()
-
-        if (productId.isBlank()) {
-            return buildString {
-                appendLine("DEMO ERP DETENIDA")
-                appendLine()
-                appendLine("Cliente creado: $customerId")
-                appendLine("No se pudo crear el producto.")
-                appendLine(productResponse.toString(2))
-            }
-        }
-
-        val purchaseResponse = executeRaw(
-            AgentAction.ToolCall(
-                tool = "createPurchase",
-                arguments = JSONObject()
-                    .put("productId", productId)
-                    .put("quantity", 50)
-                    .put("unitCost", 15)
-            )
-        )
-
-        val inventoryAfterPurchase = executeRaw(
-            AgentAction.ToolCall(
-                tool = "getInventory",
-                arguments = JSONObject()
-                    .put("productId", productId)
-            )
-        )
-
-        val saleItems = JSONArray()
-            .put(
-                JSONObject()
-                    .put("productId", productId)
-                    .put("quantity", 2)
-            )
-
-        val saleResponse = executeRaw(
-            AgentAction.ToolCall(
-                tool = "createSale",
-                arguments = JSONObject()
-                    .put("customerId", customerId)
-                    .put("items", saleItems)
-            )
-        )
-
-        val inventoryAfterSale = executeRaw(
-            AgentAction.ToolCall(
-                tool = "getInventory",
-                arguments = JSONObject()
-                    .put("productId", productId)
-            )
-        )
-
-        return buildString {
-            appendLine("DEMO ERP COMPLETADA")
-            appendLine()
-            appendLine("1. Cliente creado:")
-            appendLine("customerId: $customerId")
-            appendLine()
-            appendLine("2. Producto creado:")
-            appendLine("productId: $productId")
-            appendLine()
-            appendLine("3. Compra registrada:")
-            appendLine(purchaseResponse.toString(2))
-            appendLine()
-            appendLine("4. Inventario después de la compra:")
-            appendLine(inventoryAfterPurchase.toString(2))
-            appendLine()
-            appendLine("5. Venta registrada:")
-            appendLine(saleResponse.toString(2))
-            appendLine()
-            appendLine("6. Inventario después de la venta:")
-            appendLine(inventoryAfterSale.toString(2))
         }
     }
 
@@ -318,20 +180,6 @@ class ToolExecutor(
             .replace("+", "%20")
     }
 
-    private fun generateCode(): String {
-        return SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date())
-    }
-
-    private fun formatJson(title: String, json: JSONObject): String {
-        return buildString {
-            appendLine(title)
-            appendLine()
-            appendLine(json.toString(2))
-        }
-    }
-
-    // Normaliza los campos de nombre (minúsculas, sin acentos) en herramientas de creación y búsqueda
-    // para que el backend almacene y recupere datos de forma consistente sin importar la fuente.
     private fun normalizeArgumentsForTool(toolName: String, arguments: JSONObject): JSONObject {
         return when (toolName) {
             "createProduct", "updateProduct" -> {
@@ -340,22 +188,68 @@ class ToolExecutor(
                     ?.let { copy.put("name", normalizeNameText(it)) }
                 copy
             }
-            "createCustomer" -> {
-                val copy = JSONObject(arguments.toString())
-                copy.optString("firstName").takeIf { it.isNotBlank() }
-                    ?.let { copy.put("firstName", stripLeadingArticle(normalizeNameText(it))) }
-                copy.optString("lastName").takeIf { it.isNotBlank() }
-                    ?.let { copy.put("lastName", stripLeadingArticle(normalizeNameText(it))) }
-                copy
-            }
+
+            "createCustomer" -> normalizeCreateCustomerArguments(arguments)
+
             "searchProduct", "searchCustomer" -> {
                 val copy = JSONObject(arguments.toString())
                 copy.optString("name").takeIf { it.isNotBlank() }
-                    ?.let { copy.put("name", normalizeNameText(it)) }
+                    ?.let { copy.put("name", normalizeNameText(stripLeadingCustomerNoise(it))) }
                 copy
             }
+
             else -> arguments
         }
+    }
+
+    private fun normalizeCreateCustomerArguments(arguments: JSONObject): JSONObject {
+        val copy = JSONObject(arguments.toString())
+
+        val aliasName = copy.optString("name", "").trim()
+        var firstName = copy.optString("firstName", "").trim()
+        var lastName = copy.optString("lastName", "").trim()
+
+        val firstNameLooksLikeArticle = isLeadingArticle(firstName)
+        val shouldSplitFullName =
+            aliasName.isNotBlank() ||
+                    lastName.isBlank() ||
+                    firstNameLooksLikeArticle
+
+        if (shouldSplitFullName) {
+            val fullNameSource = when {
+                aliasName.isNotBlank() -> aliasName
+                firstName.isNotBlank() && lastName.isNotBlank() -> "$firstName $lastName"
+                else -> firstName.ifBlank { lastName }
+            }
+
+            val cleanedFullName = normalizeNameText(stripLeadingCustomerNoise(fullNameSource))
+            val parts = cleanedFullName
+                .split(Regex("\\s+"))
+                .filter { it.isNotBlank() }
+
+            if (parts.size >= 2) {
+                copy.put("firstName", parts.first())
+                copy.put("lastName", parts.drop(1).joinToString(" "))
+                copy.remove("name")
+                return copy
+            }
+
+            if (parts.size == 1) {
+                copy.put("firstName", parts.first())
+                copy.put("lastName", "")
+                copy.remove("name")
+                return copy
+            }
+        }
+
+        firstName = normalizeNameText(stripLeadingCustomerNoise(firstName))
+        lastName = normalizeNameText(stripLeadingCustomerNoise(lastName))
+
+        copy.put("firstName", firstName)
+        copy.put("lastName", lastName)
+        copy.remove("name")
+
+        return copy
     }
 
     private fun normalizeNameText(value: String): String {
@@ -364,9 +258,25 @@ class ToolExecutor(
         return noAccents.trim().lowercase().replace(Regex("\\s+"), " ")
     }
 
-    private fun stripLeadingArticle(value: String): String {
-        val articles = listOf("el ", "la ", "los ", "las ", "al ")
-        return articles.firstOrNull { value.startsWith(it) }
-            ?.let { value.removePrefix(it).trim() } ?: value
+    private fun stripLeadingCustomerNoise(value: String): String {
+        return value
+            .trim()
+            .replace(Regex("(?i)^(cliente|usuario|customer)\\s+"), "")
+            .replace(Regex("(?i)^(llamado|llamada|nombre)\\s+"), "")
+            .replace(Regex("(?i)^(el|la|los|las|al|a)\\s+"), "")
+            .replace(Regex("[.,;:]$"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun isLeadingArticle(value: String): Boolean {
+        val normalized = normalizeNameText(value)
+        return normalized in setOf("el", "la", "los", "las", "al", "a") ||
+                normalized.startsWith("el ") ||
+                normalized.startsWith("la ") ||
+                normalized.startsWith("los ") ||
+                normalized.startsWith("las ") ||
+                normalized.startsWith("al ") ||
+                normalized.startsWith("a ")
     }
 }

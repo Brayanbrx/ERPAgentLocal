@@ -4,7 +4,12 @@ data class ModelStatus(
     val initialized: Boolean,
     val modelPath: String?,
     val modelName: String?,
-    val backend: String,
+    val modelFileSize: Long = 0L,
+    val backendMode: ModelBackendMode = ModelBackendMode.AUTO,
+    val activeBackend: String = "none",
+    val modelLoadMs: Long? = null,
+    val warmupMs: Long? = null,
+    val lastGenerationMs: Long? = null,
     val lastError: String? = null
 ) {
 
@@ -13,7 +18,11 @@ data class ModelStatus(
             appendLine("MODEL STATUS")
             appendLine()
             appendLine("Initialized: $initialized")
-            appendLine("Backend: $backend")
+            appendLine("Backend mode: $backendMode")
+            appendLine("Active backend: $activeBackend")
+            appendLine("Model load ms: ${modelLoadMs ?: "none"}")
+            appendLine("Warmup ms: ${warmupMs ?: "none"}")
+            appendLine("Last generation ms: ${lastGenerationMs ?: "none"}")
             appendLine()
 
             appendLine("Model name:")
@@ -24,30 +33,13 @@ data class ModelStatus(
             appendLine(modelPath ?: "none")
             appendLine()
 
+            appendLine("Model file size:")
+            appendLine(if (modelFileSize > 0L) "$modelFileSize bytes" else "none")
+            appendLine()
+
             if (!lastError.isNullOrBlank()) {
                 appendLine("Last error:")
                 appendLine(lastError)
-            }
-        }
-    }
-
-    fun toUserText(): String {
-        return if (initialized) {
-            buildString {
-                appendLine("Modelo cargado correctamente.")
-                appendLine()
-                appendLine("Archivo:")
-                appendLine(modelName ?: "Modelo desconocido")
-            }
-        } else {
-            buildString {
-                appendLine("Modelo no inicializado.")
-
-                if (!lastError.isNullOrBlank()) {
-                    appendLine()
-                    appendLine("Último error:")
-                    appendLine(lastError)
-                }
             }
         }
     }

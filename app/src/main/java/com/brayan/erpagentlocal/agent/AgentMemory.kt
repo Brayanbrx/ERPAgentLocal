@@ -32,12 +32,6 @@ class AgentMemory(private val maxUserMessages: Int = 3) {
     // Las respuestas del agente se resumen en AgentState — no hace falta duplicarlas aquí.
     fun addAssistant(content: String) {}
 
-    // Las respuestas JSON de herramientas las gestiona AgentState/AgentStateUpdater.
-    // Aquí solo se almacenan hechos compactos mediante recordFact(), no respuestas completas.
-    fun addTool(toolName: String, content: String) {}
-
-    fun addSystem(content: String) {}
-
     /**
      * Registra un hecho compacto de entidad tras ejecutar una herramienta exitosamente.
      * Lo llama AgentService con los datos clave extraídos del resultado.

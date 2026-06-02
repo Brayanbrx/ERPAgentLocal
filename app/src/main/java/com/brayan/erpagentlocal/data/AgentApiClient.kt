@@ -1,5 +1,7 @@
 package com.brayan.erpagentlocal.data
 
+import com.brayan.erpagentlocal.metrics.PerformanceEvent
+import com.brayan.erpagentlocal.metrics.PerformanceTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -42,7 +44,7 @@ class AgentApiClient {
                 .get()
                 .build()
 
-            executeRequest(request)
+            executeRequest(request = request, method = "GET", path = path)
         }
     }
 
@@ -55,7 +57,7 @@ class AgentApiClient {
                 .post(requestBody)
                 .build()
 
-            executeRequest(request)
+            executeRequest(request = request, method = "POST", path = path)
         }
     }
 
@@ -68,7 +70,7 @@ class AgentApiClient {
                 .patch(requestBody)
                 .build()
 
-            executeRequest(request)
+            executeRequest(request = request, method = "PATCH", path = path)
         }
     }
 
@@ -79,13 +81,23 @@ class AgentApiClient {
                 .delete()
                 .build()
 
-            executeRequest(request)
+            executeRequest(request = request, method = "DELETE", path = path)
         }
     }
 
-    private fun executeRequest(request: Request): JSONObject {
+    private fun executeRequest(
+        request: Request,
+        method: String,
+        path: String
+    ): JSONObject {
+        val startedAtMs = System.currentTimeMillis()
+        val url = request.url.toString()
+
         return try {
             client.newCall(request).execute().use { response ->
+                val latencyMs = System.currentTimeMillis() - startedAtMs
+                PerformanceTracker.record(PerformanceEvent.LAMBDA_LATENCY_MS, latencyMs)
+
                 val responseBody = response.body?.string().orEmpty()
                 val parsedBody = parseResponseBody(responseBody)
                 val statusCode = response.code
@@ -94,64 +106,111 @@ class AgentApiClient {
                     return normalizeErrorResponse(
                         statusCode = statusCode,
                         parsedBody = parsedBody,
-                        rawBody = responseBody
+                        rawBody = responseBody,
+                        method = method,
+                        path = path,
+                        url = url,
+                        latencyMs = latencyMs
                     )
                 }
 
                 normalizeSuccessResponse(
                     statusCode = statusCode,
-                    parsedBody = parsedBody
+                    parsedBody = parsedBody,
+                    method = method,
+                    path = path,
+                    url = url,
+                    latencyMs = latencyMs
                 )
             }
         } catch (exception: UnknownHostException) {
-            networkError("No se pudo resolver el host del backend. Verifica tu internet o la URL del API Gateway.", exception)
+            recordFailedLatency(startedAtMs)
+            networkError(
+                message = "No se pudo resolver el host del backend. Verifica internet o la URL del API Gateway.",
+                exception = exception,
+                method = method,
+                path = path,
+                url = url
+            )
         } catch (exception: SocketTimeoutException) {
-            networkError("La conexión con el backend tardó demasiado.", exception)
+            recordFailedLatency(startedAtMs)
+            networkError(
+                message = "La conexión con el backend tardó demasiado. El API puede estar apagado o lento.",
+                exception = exception,
+                method = method,
+                path = path,
+                url = url
+            )
         } catch (exception: IOException) {
-            networkError("No se pudo conectar con el backend.", exception)
+            recordFailedLatency(startedAtMs)
+            networkError(
+                message = "No se pudo conectar con el backend. Revisa la URL, internet o si la API está desplegada.",
+                exception = exception,
+                method = method,
+                path = path,
+                url = url
+            )
         } catch (exception: Exception) {
+            recordFailedLatency(startedAtMs)
             JSONObject()
                 .put("success", false)
                 .put("message", exception.message ?: "Error inesperado en la llamada HTTP.")
                 .put("statusCode", 0)
                 .put("data", JSONObject())
                 .put("error", exception.message ?: "Unexpected error")
+                .put("exceptionType", exception::class.java.simpleName)
+                .put("method", method)
+                .put("path", path)
+                .put("url", url)
+                .put("baseUrl", ApiConfig.BASE_URL)
         }
+    }
+
+    private fun recordFailedLatency(startedAtMs: Long) {
+        PerformanceTracker.record(
+            PerformanceEvent.LAMBDA_LATENCY_MS,
+            System.currentTimeMillis() - startedAtMs
+        )
     }
 
     private fun normalizeSuccessResponse(
         statusCode: Int,
-        parsedBody: JSONObject
+        parsedBody: JSONObject,
+        method: String,
+        path: String,
+        url: String,
+        latencyMs: Long
     ): JSONObject {
-        if (parsedBody.length() == 0) {
-            return JSONObject()
+        val result = if (parsedBody.length() == 0) {
+            JSONObject()
                 .put("success", true)
                 .put("message", "Empty response")
-                .put("statusCode", statusCode)
                 .put("data", JSONObject())
+        } else {
+            JSONObject(parsedBody.toString())
         }
 
-        if (!parsedBody.has("success")) {
-            parsedBody.put("success", true)
-        }
+        if (!result.has("success")) result.put("success", true)
+        if (!result.has("message")) result.put("message", "Operation completed")
+        if (!result.has("data")) result.put("data", JSONObject())
 
-        if (!parsedBody.has("message")) {
-            parsedBody.put("message", "Operation completed")
-        }
-
-        if (!parsedBody.has("data")) {
-            parsedBody.put("data", JSONObject())
-        }
-
-        parsedBody.put("statusCode", statusCode)
-
-        return parsedBody
+        return result
+            .put("statusCode", statusCode)
+            .put("method", method)
+            .put("path", path)
+            .put("url", url)
+            .put("baseUrl", ApiConfig.BASE_URL)
+            .put("latencyMs", latencyMs)
     }
 
     private fun normalizeErrorResponse(
         statusCode: Int,
         parsedBody: JSONObject,
-        rawBody: String
+        rawBody: String,
+        method: String,
+        path: String,
+        url: String,
+        latencyMs: Long
     ): JSONObject {
         val message = extractErrorMessage(parsedBody, statusCode)
 
@@ -161,11 +220,19 @@ class AgentApiClient {
             .put("statusCode", statusCode)
             .put("data", parsedBody.opt("data") ?: JSONObject())
             .put("error", rawBody.ifBlank { message })
+            .put("method", method)
+            .put("path", path)
+            .put("url", url)
+            .put("baseUrl", ApiConfig.BASE_URL)
+            .put("latencyMs", latencyMs)
     }
 
     private fun networkError(
         message: String,
-        exception: Exception
+        exception: Exception,
+        method: String,
+        path: String,
+        url: String
     ): JSONObject {
         return JSONObject()
             .put("success", false)
@@ -173,12 +240,15 @@ class AgentApiClient {
             .put("statusCode", 0)
             .put("data", JSONObject())
             .put("error", exception.message ?: message)
+            .put("exceptionType", exception::class.java.simpleName)
+            .put("method", method)
+            .put("path", path)
+            .put("url", url)
+            .put("baseUrl", ApiConfig.BASE_URL)
     }
 
     private fun parseResponseBody(responseBody: String): JSONObject {
-        if (responseBody.isBlank()) {
-            return JSONObject()
-        }
+        if (responseBody.isBlank()) return JSONObject()
 
         return try {
             JSONObject(responseBody)
@@ -195,10 +265,7 @@ class AgentApiClient {
         statusCode: Int
     ): String {
         val message = body.optString("message", "")
-
-        if (message.isNotBlank()) {
-            return message
-        }
+        if (message.isNotBlank()) return message
 
         return when (statusCode) {
             400 -> "Solicitud inválida."

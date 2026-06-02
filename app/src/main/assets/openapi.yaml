@@ -9,7 +9,7 @@ info:
     Cada operationId corresponde al nombre de una tool en Android.
 
 servers:
-  - url: https://k5nlr60gn9.execute-api.us-east-1.amazonaws.com/Prod
+  - url: https://qnphwupj51.execute-api.us-east-1.amazonaws.com/Prod
     description: AWS API Gateway Production
   - url: http://127.0.0.1:3000
     description: SAM Local

@@ -69,27 +69,6 @@ object ModelFileManager {
             ?: File(modelsDir, DEFAULT_MODEL_NAME)
     }
 
-    fun modelExists(context: Context): Boolean {
-        val file = getDefaultModelFile(context)
-        return file.exists() && file.length() > 0
-    }
-
-    fun getModelInfo(context: Context): String {
-        val file = getDefaultModelFile(context)
-
-        if (!file.exists()) {
-            return "No hay modelo copiado todavía."
-        }
-
-        val sizeMb = file.length().toDouble() / (1024.0 * 1024.0)
-
-        return buildString {
-            appendLine("Modelo encontrado:")
-            appendLine(file.absolutePath)
-            appendLine("Tamaño aproximado: ${"%.2f".format(sizeMb)} MB")
-        }
-    }
-
     private fun getFileNameFromUri(context: Context, uri: Uri): String? {
         var cursor: Cursor? = null
 

@@ -5,31 +5,50 @@ import org.json.JSONArray
 
 object ToolCatalogLoader {
 
+    private const val GENERATED_TOOLS_ASSET = "tools.generated.json"
     private const val DEFAULT_TOOLS_ASSET = "tools.json"
 
     fun loadFromAssets(
         context: Context,
-        assetFileName: String = DEFAULT_TOOLS_ASSET
+        assetFileName: String? = null
     ): ToolCatalog {
-        return try {
-            val jsonText = context.assets
-                .open(assetFileName)
-                .bufferedReader()
-                .use { reader ->
-                    reader.readText()
-                }
-
-            parse(jsonText)
-        } catch (_: Exception) {
-            /*
-             * Si falla la lectura del archivo, usamos el catálogo por defecto
-             * para no romper la app durante la presentación.
-             */
-            ToolCatalog.default()
+        val candidates = if (assetFileName != null) {
+            listOf(assetFileName)
+        } else {
+            listOf(GENERATED_TOOLS_ASSET, DEFAULT_TOOLS_ASSET)
         }
+
+        val errors = mutableListOf<String>()
+
+        candidates.forEach { candidate ->
+            try {
+                val jsonText = context.assets
+                    .open(candidate)
+                    .bufferedReader()
+                    .use { reader ->
+                        reader.readText()
+                    }
+
+                return parse(
+                    jsonText = jsonText,
+                    source = candidate,
+                    loadError = errors.takeIf { it.isNotEmpty() }?.joinToString(" | ")
+                )
+            } catch (exception: Exception) {
+                errors.add("$candidate: ${exception.message ?: exception::class.java.simpleName}")
+            }
+        }
+
+        return ToolCatalog.default(
+            loadError = errors.joinToString(" | ").ifBlank { "No asset catalog available." }
+        )
     }
 
-    fun parse(jsonText: String): ToolCatalog {
+    fun parse(
+        jsonText: String,
+        source: String = "inline-json",
+        loadError: String? = null
+    ): ToolCatalog {
         val jsonArray = JSONArray(jsonText)
         val tools = mutableListOf<ToolDefinition>()
 
@@ -57,7 +76,11 @@ object ToolCatalogLoader {
             )
         }
 
-        return ToolCatalog(tools)
+        return ToolCatalog(
+            tools = tools,
+            source = source,
+            loadError = loadError
+        )
     }
 
     private fun JSONArray?.toStringList(): List<String> {

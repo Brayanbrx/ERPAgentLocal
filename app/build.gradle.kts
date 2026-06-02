@@ -20,6 +20,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -34,14 +35,49 @@ android {
     }
 
     buildTypes {
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
+    debug {
+        buildConfigField(
+            "String",
+            "SERVERLESS_BASE_URL",
+            "\"https://qnphwupj51.execute-api.us-east-1.amazonaws.com/Prod\""
+        )
     }
+
+    release {
+        isMinifyEnabled = false
+        buildConfigField(
+            "String",
+            "SERVERLESS_BASE_URL",
+            "\"https://qnphwupj51.execute-api.us-east-1.amazonaws.com/Prod\""
+        )
+        proguardFiles(
+            getDefaultProguardFile("proguard-android-optimize.txt"),
+            "proguard-rules.pro"
+        )
+    }
+}
+}
+
+val generateToolsFromOpenApi by tasks.registering(Exec::class) {
+    val inputFile = rootProject.file("app/src/main/assets/openapi.yaml")
+    val outputFile = rootProject.file("app/src/main/assets/tools.generated.json")
+
+    inputs.file(inputFile)
+    outputs.file(outputFile)
+
+    workingDir = rootProject.projectDir
+    commandLine(
+        "python",
+        rootProject.file("scripts/openapi_to_tools.py").absolutePath,
+        "--input",
+        inputFile.absolutePath,
+        "--output",
+        outputFile.absolutePath
+    )
+}
+
+tasks.named("preBuild") {
+    dependsOn(generateToolsFromOpenApi)
 }
 
 dependencies {
@@ -72,6 +108,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 

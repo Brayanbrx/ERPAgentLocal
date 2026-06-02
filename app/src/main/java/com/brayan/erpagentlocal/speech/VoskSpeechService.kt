@@ -1,6 +1,8 @@
 package com.brayan.erpagentlocal.speech
 
 import android.content.Context
+import com.brayan.erpagentlocal.metrics.PerformanceEvent
+import com.brayan.erpagentlocal.metrics.PerformanceTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -36,6 +38,7 @@ class VoskSpeechService {
         }
 
         withContext(Dispatchers.IO) {
+            val startedAtMs = System.currentTimeMillis()
             try {
                 StorageService.unpack(
                     context,
@@ -44,13 +47,25 @@ class VoskSpeechService {
                     { unpackedModel ->
                         model = unpackedModel
                         initialized = true
+                        PerformanceTracker.record(
+                            PerformanceEvent.VOSK_LOAD_MS,
+                            System.currentTimeMillis() - startedAtMs
+                        )
                         onReady()
                     },
                     { exception ->
+                        PerformanceTracker.record(
+                            PerformanceEvent.VOSK_LOAD_MS,
+                            System.currentTimeMillis() - startedAtMs
+                        )
                         onError("No se pudo cargar el modelo Vosk: ${exception.message}")
                     }
                 )
             } catch (exception: Exception) {
+                PerformanceTracker.record(
+                    PerformanceEvent.VOSK_LOAD_MS,
+                    System.currentTimeMillis() - startedAtMs
+                )
                 onError("Error inicializando Vosk: ${exception.message}")
             }
         }
@@ -61,6 +76,7 @@ class VoskSpeechService {
         onFinalResult: (String) -> Unit,
         onError: (String) -> Unit
     ) {
+        val startedAtMs = System.currentTimeMillis()
         val activeModel = model
         if (activeModel == null) {
             onError("El modelo de voz todavía no está listo.")
@@ -121,6 +137,10 @@ class VoskSpeechService {
 
                     recording = false
                     resultDelivered = true
+                    PerformanceTracker.record(
+                        PerformanceEvent.SPEECH_TRANSCRIPTION_MS,
+                        System.currentTimeMillis() - startedAtMs
+                    )
 
                     if (finalText.isNotBlank()) {
                         onFinalResult(finalText)
@@ -129,6 +149,10 @@ class VoskSpeechService {
 
                 override fun onError(exception: Exception?) {
                     recording = false
+                    PerformanceTracker.record(
+                        PerformanceEvent.SPEECH_TRANSCRIPTION_MS,
+                        System.currentTimeMillis() - startedAtMs
+                    )
                     onError(exception?.message ?: "Error desconocido reconociendo audio.")
                 }
 
@@ -136,6 +160,10 @@ class VoskSpeechService {
                     if (resultDelivered) return
                     recording = false
                     resultDelivered = true
+                    PerformanceTracker.record(
+                        PerformanceEvent.SPEECH_TRANSCRIPTION_MS,
+                        System.currentTimeMillis() - startedAtMs
+                    )
 
                     val finalText = lastResultText
                         .ifBlank { lastPartialText }
@@ -150,6 +178,10 @@ class VoskSpeechService {
             recording = true
         } catch (exception: Exception) {
             recording = false
+            PerformanceTracker.record(
+                PerformanceEvent.SPEECH_TRANSCRIPTION_MS,
+                System.currentTimeMillis() - startedAtMs
+            )
             onError("No se pudo iniciar la grabación: ${exception.message}")
         }
     }

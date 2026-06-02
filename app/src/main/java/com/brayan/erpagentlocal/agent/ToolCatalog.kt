@@ -1,7 +1,9 @@
 package com.brayan.erpagentlocal.agent
 
 class ToolCatalog(
-    private val tools: List<ToolDefinition>
+    private val tools: List<ToolDefinition>,
+    val source: String = "default",
+    val loadError: String? = null
 ) {
 
     fun getAll(): List<ToolDefinition> {
@@ -28,6 +30,12 @@ class ToolCatalog(
         return buildString {
             appendLine("TOOLS FROM OPENAPI CONTRACT")
             appendLine()
+            appendLine("Source: $source")
+            appendLine("Count: ${tools.size}")
+            if (!loadError.isNullOrBlank()) {
+                appendLine("Fallback reason: $loadError")
+            }
+            appendLine()
             appendLine("Each tool name matches an OpenAPI operationId.")
             appendLine()
 
@@ -38,25 +46,18 @@ class ToolCatalog(
         }
     }
 
-    fun describeToolsForPrompt(): String {
-        return buildString {
-            tools.forEach { tool ->
-                appendLine(tool.toPromptBlock())
-                appendLine()
-            }
-        }
-    }
-
-    fun namesAsText(): String {
-        return tools.joinToString(", ") { tool ->
-            tool.name
-        }
-    }
-
     companion object {
 
         fun default(): ToolCatalog {
-            return ToolCatalog(defaultTools())
+            return default(null)
+        }
+
+        fun default(loadError: String?): ToolCatalog {
+            return ToolCatalog(
+                tools = defaultTools(),
+                source = "ToolCatalog.default",
+                loadError = loadError
+            )
         }
 
         fun defaultTools(): List<ToolDefinition> {

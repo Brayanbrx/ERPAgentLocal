@@ -1,47 +1,34 @@
 package com.brayan.erpagentlocal.agent
 
 import com.brayan.erpagentlocal.util.JsonUtils
+import org.json.JSONArray
 import org.json.JSONObject
 
 class AgentActionParser {
 
     fun parse(rawText: String): AgentAction {
-        val cleanedText = JsonUtils.extractJsonObject(rawText)
-
         return try {
-            val json = JSONObject(cleanedText.trim())
+            val cleaned = JsonUtils.extractJsonObject(rawText).trim()
+
+            if (cleaned.startsWith("[")) {
+                return parseArrayAsQueue(JSONArray(cleaned))
+            }
+
+            val json = JSONObject(cleaned)
             val type = json.optString("type").trim()
             val tool = json.optString("tool").trim()
 
             when {
+                type == "tool_queue" -> parseToolQueue(json)
                 type == "tool_call" -> parseToolCall(json)
-
                 type == "ask_user" -> parseAskUser(json)
-
                 type == "final" -> parseFinal(json)
-
-                tool.isNotBlank() && ToolRegistry.exists(tool) -> {
-                    parseToolCall(json)
-                }
-
-                type.isNotBlank() && ToolRegistry.exists(type) -> {
-                    val normalized = JSONObject()
-                        .put("type", "tool_call")
-                        .put("tool", type)
-                        .put("arguments", json.optJSONObject("arguments") ?: JSONObject())
-
-                    parseToolCall(normalized)
-                }
-
-                else -> {
-                    AgentAction.Invalid(
-                        "No pude interpretar la acción del modelo. Intenta escribir la instrucción de forma más específica."
-                    )
-                }
+                tool.isNotBlank() -> parseToolCall(json)
+                else -> AgentAction.Invalid("El JSON no contiene una acción válida.")
             }
-        } catch (_: Exception) {
+        } catch (exception: Exception) {
             AgentAction.Invalid(
-                "No pude interpretar la acción del modelo. Intenta escribir la instrucción de forma más específica."
+                "No pude interpretar la acción del modelo. Respuesta inválida: ${exception.message}"
             )
         }
     }
@@ -51,32 +38,60 @@ class AgentActionParser {
         val arguments = json.optJSONObject("arguments") ?: JSONObject()
 
         if (tool.isBlank()) {
-            return AgentAction.Invalid("El campo 'tool' es obligatorio.")
+            return AgentAction.Invalid("Falta el campo tool.")
         }
 
-        return AgentAction.ToolCall(
-            tool = tool,
-            arguments = arguments
-        )
+        if (!ToolRegistry.exists(tool)) {
+            return AgentAction.Invalid("La tool '$tool' no existe.")
+        }
+
+        return AgentAction.ToolCall(tool, arguments)
+    }
+
+    private fun parseToolQueue(json: JSONObject): AgentAction {
+        val actions = json.optJSONArray("actions")
+            ?: return AgentAction.Invalid("tool_queue necesita actions.")
+
+        return parseArrayAsQueue(actions)
+    }
+
+    private fun parseArrayAsQueue(array: JSONArray): AgentAction {
+        val actions = mutableListOf<AgentAction.ToolCall>()
+
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i)
+                ?: return AgentAction.Invalid("Cada acción debe ser un objeto JSON.")
+
+            val tool = item.optString("tool").trim()
+            val arguments = item.optJSONObject("arguments") ?: JSONObject()
+
+            if (tool.isBlank()) {
+                return AgentAction.Invalid("Una acción no tiene tool.")
+            }
+
+            if (!ToolRegistry.exists(tool)) {
+                return AgentAction.Invalid("La tool '$tool' no existe.")
+            }
+
+            actions.add(AgentAction.ToolCall(tool, arguments))
+        }
+
+        if (actions.isEmpty()) {
+            return AgentAction.Invalid("La cola de acciones está vacía.")
+        }
+
+        return AgentAction.ToolQueue(actions)
     }
 
     private fun parseAskUser(json: JSONObject): AgentAction {
         val message = json.optString("message").trim()
-
-        if (message.isBlank()) {
-            return AgentAction.Invalid("El campo 'message' es obligatorio para ask_user.")
-        }
-
+        if (message.isBlank()) return AgentAction.Invalid("ask_user necesita message.")
         return AgentAction.AskUser(message)
     }
 
     private fun parseFinal(json: JSONObject): AgentAction {
         val message = json.optString("message").trim()
-
-        if (message.isBlank()) {
-            return AgentAction.Invalid("El campo 'message' es obligatorio para final.")
-        }
-
+        if (message.isBlank()) return AgentAction.Invalid("final necesita message.")
         return AgentAction.Final(message)
     }
 }

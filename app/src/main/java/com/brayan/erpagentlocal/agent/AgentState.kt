@@ -6,6 +6,7 @@ data class AgentState(
     val lastProductId: String? = null,
     val lastProductName: String? = null,
     val lastProductPurchasePrice: Double? = null,
+    val lastProductSalePrice: Double? = null,
     val lastSaleId: String? = null,
     val lastPurchaseId: String? = null,
     val lastInventoryStock: Int? = null,
@@ -13,10 +14,7 @@ data class AgentState(
     val executedTools: List<ExecutedTool> = emptyList()
 ) {
 
-    fun withCustomer(
-        customerId: String?,
-        customerName: String?
-    ): AgentState {
+    fun withCustomer(customerId: String?, customerName: String?): AgentState {
         return copy(
             lastCustomerId = customerId ?: lastCustomerId,
             lastCustomerName = customerName ?: lastCustomerName
@@ -26,91 +24,40 @@ data class AgentState(
     fun withProduct(
         productId: String?,
         productName: String?,
-        purchasePrice: Double? = null
+        purchasePrice: Double? = null,
+        salePrice: Double? = null
     ): AgentState {
         return copy(
             lastProductId = productId ?: lastProductId,
             lastProductName = productName ?: lastProductName,
-            lastProductPurchasePrice = purchasePrice ?: lastProductPurchasePrice
+            lastProductPurchasePrice = purchasePrice ?: lastProductPurchasePrice,
+            lastProductSalePrice = salePrice ?: lastProductSalePrice
         )
     }
 
-    fun withSale(
-        saleId: String?
-    ): AgentState {
-        return copy(
-            lastSaleId = saleId ?: lastSaleId
-        )
+    fun withSale(saleId: String?): AgentState {
+        return copy(lastSaleId = saleId ?: lastSaleId)
     }
 
-    fun withPurchase(
-        purchaseId: String?
-    ): AgentState {
-        return copy(
-            lastPurchaseId = purchaseId ?: lastPurchaseId
-        )
+    fun withPurchase(purchaseId: String?): AgentState {
+        return copy(lastPurchaseId = purchaseId ?: lastPurchaseId)
     }
 
-    fun withInventoryStock(
-        stock: Int?
-    ): AgentState {
-        return copy(
-            lastInventoryStock = stock ?: lastInventoryStock
-        )
+    fun withInventoryStock(stock: Int?): AgentState {
+        return copy(lastInventoryStock = stock ?: lastInventoryStock)
     }
 
-    fun withPendingQuestion(
-        question: String?
-    ): AgentState {
-        return copy(
-            pendingQuestion = question
-        )
+    fun withPendingQuestion(question: String?): AgentState {
+        return copy(pendingQuestion = question)
     }
 
-    fun clearPendingQuestion(): AgentState {
-        return copy(
-            pendingQuestion = null
-        )
+    fun addExecutedTool(executedTool: ExecutedTool): AgentState {
+        return copy(executedTools = executedTools + executedTool)
     }
 
-    fun addExecutedTool(
-        executedTool: ExecutedTool
-    ): AgentState {
-        return copy(
-            executedTools = executedTools + executedTool
-        )
-    }
-
-    fun keepLastExecutedTools(
-        maxItems: Int
-    ): AgentState {
-        if (maxItems <= 0) {
-            return copy(executedTools = emptyList())
-        }
-
-        return copy(
-            executedTools = executedTools.takeLast(maxItems)
-        )
-    }
-
-    fun hasCustomer(): Boolean {
-        return !lastCustomerId.isNullOrBlank()
-    }
-
-    fun hasProduct(): Boolean {
-        return !lastProductId.isNullOrBlank()
-    }
-
-    fun hasSale(): Boolean {
-        return !lastSaleId.isNullOrBlank()
-    }
-
-    fun hasPurchase(): Boolean {
-        return !lastPurchaseId.isNullOrBlank()
-    }
-
-    fun hasPendingQuestion(): Boolean {
-        return !pendingQuestion.isNullOrBlank()
+    fun keepLastExecutedTools(maxItems: Int): AgentState {
+        if (maxItems <= 0) return copy(executedTools = emptyList())
+        return copy(executedTools = executedTools.takeLast(maxItems))
     }
 
     fun toPromptBlock(): String {
@@ -121,22 +68,11 @@ data class AgentState(
             appendLine("  \"lastProductId\": ${jsonStringOrNull(lastProductId)},")
             appendLine("  \"lastProductName\": ${jsonStringOrNull(lastProductName)},")
             appendLine("  \"lastProductPurchasePrice\": ${lastProductPurchasePrice?.toString() ?: "null"},")
+            appendLine("  \"lastProductSalePrice\": ${lastProductSalePrice?.toString() ?: "null"},")
             appendLine("  \"lastSaleId\": ${jsonStringOrNull(lastSaleId)},")
             appendLine("  \"lastPurchaseId\": ${jsonStringOrNull(lastPurchaseId)},")
             appendLine("  \"lastInventoryStock\": ${lastInventoryStock?.toString() ?: "null"},")
-            appendLine("  \"pendingQuestion\": ${jsonStringOrNull(pendingQuestion)},")
-            appendLine("  \"executedTools\": [")
-
-            executedTools.forEachIndexed { index, tool ->
-                append(tool.toPromptBlock())
-                if (index < executedTools.lastIndex) {
-                    appendLine(",")
-                } else {
-                    appendLine()
-                }
-            }
-
-            appendLine("  ]")
+            appendLine("  \"pendingQuestion\": ${jsonStringOrNull(pendingQuestion)}")
             appendLine("}")
         }
     }
@@ -150,6 +86,7 @@ data class AgentState(
             appendLine("lastProductId: ${lastProductId ?: "none"}")
             appendLine("lastProductName: ${lastProductName ?: "none"}")
             appendLine("lastProductPurchasePrice: ${lastProductPurchasePrice ?: "none"}")
+            appendLine("lastProductSalePrice: ${lastProductSalePrice ?: "none"}")
             appendLine("lastSaleId: ${lastSaleId ?: "none"}")
             appendLine("lastPurchaseId: ${lastPurchaseId ?: "none"}")
             appendLine("lastInventoryStock: ${lastInventoryStock ?: "none"}")
@@ -166,10 +103,7 @@ data class AgentState(
     }
 
     private fun jsonStringOrNull(value: String?): String {
-        if (value.isNullOrBlank()) {
-            return "null"
-        }
-
+        if (value.isNullOrBlank()) return "null"
         return "\"${escape(value)}\""
     }
 
@@ -182,8 +116,6 @@ data class AgentState(
     }
 
     companion object {
-        fun empty(): AgentState {
-            return AgentState()
-        }
+        fun empty(): AgentState = AgentState()
     }
 }

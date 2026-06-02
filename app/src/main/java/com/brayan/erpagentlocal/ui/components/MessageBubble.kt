@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.brayan.erpagentlocal.ui.theme.ErpColors
 
@@ -26,61 +28,62 @@ fun MessageBubble(
     modifier: Modifier = Modifier
 ) {
     val isUser = message.role == "user"
-    val isSystem = message.role == "system"
+    val isError = message.role == "error"
+    val isWarning = message.role == "warning"
+    val isConfirmation = message.role == "confirmation"
+    val isSystem = message.role == "system" || message.role == "tool-trace"
 
     val backgroundColor = when {
         isUser -> ErpColors.UserBubble
+        isError -> ErpColors.ErrorSoft
+        isWarning || isConfirmation -> ErpColors.WarningSoft
         isSystem -> ErpColors.ToolBubble
         else -> ErpColors.AssistantBubble
     }
 
-    val horizontalAlignment = if (isUser) {
-        Alignment.End
-    } else {
-        Alignment.Start
+    val textColor = when {
+        isUser -> Color.White
+        isError -> Color(0xFFFFB4B4)
+        isWarning || isConfirmation -> Color(0xFFFFD98A)
+        else -> ErpColors.TextPrimary
     }
 
-    val label = when {
-        isUser -> "Tú"
-        isSystem -> "Sistema"
-        else -> "Agente"
-    }
+    val horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
 
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = horizontalAlignment,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = ErpColors.TextMuted,
-            modifier = Modifier.padding(
-                start = 4.dp,
-                end = 4.dp,
-                bottom = 4.dp
-            )
-        )
-
         Box(
             modifier = Modifier
-                .fillMaxWidth(if (isUser) 0.88f else 0.94f)
-                .background(
-                    color = backgroundColor,
-                    shape = RoundedCornerShape(
-                        topStart = 18.dp,
-                        topEnd = 18.dp,
-                        bottomStart = if (isUser) 18.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 18.dp
-                    )
-                )
-                .padding(14.dp)
+                .fillMaxWidth()
+                .padding(
+                    start = if (isUser) 54.dp else 0.dp,
+                    end = if (isUser) 0.dp else 54.dp
+                ),
+            contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
         ) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.bodyMedium,
-                color = ErpColors.TextPrimary
-            )
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 330.dp)
+                    .background(
+                        color = backgroundColor,
+                        shape = RoundedCornerShape(
+                            topStart = 20.dp,
+                            topEnd = 20.dp,
+                            bottomStart = if (isUser) 20.dp else 6.dp,
+                            bottomEnd = if (isUser) 6.dp else 20.dp
+                        )
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = textColor
+                )
+            }
         }
     }
 }

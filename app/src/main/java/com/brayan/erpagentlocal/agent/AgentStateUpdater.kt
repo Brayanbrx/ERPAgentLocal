@@ -11,19 +11,19 @@ class AgentStateUpdater {
         response: JSONObject,
         currentState: AgentState
     ): AgentState {
-        if (!response.optBoolean("success", false)) {
-            return currentState
-        }
+        if (!response.optBoolean("success", false)) return currentState
 
-        // Deletes don't need response data — they clear the relevant state fields directly.
         when (toolName) {
             "deleteCustomer" -> return currentState.copy(
                 lastCustomerId = null,
                 lastCustomerName = null
             )
+
             "deleteProduct" -> return currentState.copy(
                 lastProductId = null,
-                lastProductName = null
+                lastProductName = null,
+                lastProductPurchasePrice = null,
+                lastProductSalePrice = null
             )
         }
 
@@ -36,27 +36,23 @@ class AgentStateUpdater {
                 fallbackName = buildCustomerNameFromArguments(arguments)
             )
 
-            "searchCustomer" -> updateFromCustomerSearch(
-                data = data,
-                currentState = currentState
-            )
+            "searchCustomer" -> updateFromCustomerSearch(data, currentState)
 
             "createProduct" -> updateFromProductObject(
                 product = data as? JSONObject,
                 currentState = currentState,
-                fallbackName = arguments.optString("name", null)
+                fallbackName = arguments.optString("name", "")
             )
 
-            "searchProduct" -> updateFromProductSearch(
-                data = data,
-                currentState = currentState
-            )
+            "searchProduct" -> updateFromProductSearch(data, currentState)
 
             "updateProduct" -> updateFromProductObject(
                 product = data as? JSONObject,
                 currentState = currentState,
-                fallbackName = arguments.optString("name", null)
+                fallbackName = arguments.optString("name", "")
             )
+
+            "listProducts" -> currentState
 
             "getInventory" -> updateFromInventoryObject(
                 inventory = data as? JSONObject,
@@ -75,53 +71,6 @@ class AgentStateUpdater {
 
             else -> currentState
         }
-    }
-
-    fun addExecutedTool(
-        toolName: String,
-        arguments: JSONObject,
-        response: JSONObject,
-        currentState: AgentState
-    ): AgentState {
-        val executedTool = ExecutedTool(
-            toolName = toolName,
-            argumentsJson = arguments.toString(2),
-            success = response.optBoolean("success", false),
-            resultSummary = response.optString("message", "Tool executed"),
-            resultJson = extractRelevantIds(response)
-        )
-
-        return currentState
-            .addExecutedTool(executedTool)
-            .keepLastExecutedTools(10)
-    }
-
-    private fun extractRelevantIds(response: JSONObject): String {
-        val ids = mutableListOf<String>()
-
-        fun scanObject(obj: JSONObject?) {
-            obj ?: return
-            listOf("customerId", "productId", "purchaseId", "saleId", "inventoryId", "movementId", "stock")
-                .forEach { key ->
-                    val value = obj.opt(key)
-                    if (value != null && value.toString().isNotBlank()) ids.add("$key=$value")
-                }
-        }
-
-        val data = response.opt("data")
-        when (data) {
-            is JSONObject -> {
-                scanObject(data)
-                scanObject(data.optJSONObject("purchase"))
-                scanObject(data.optJSONObject("sale"))
-                scanObject(data.optJSONObject("inventory"))
-            }
-            is JSONArray -> {
-                for (i in 0 until data.length()) scanObject(data.optJSONObject(i))
-            }
-        }
-
-        return ids.joinToString(", ").ifBlank { response.optString("message", "ok") }
     }
 
     fun updateAndStoreExecution(
@@ -145,21 +94,33 @@ class AgentStateUpdater {
         )
     }
 
-    private fun updateFromCustomerSearch(
-        data: Any,
+    fun addExecutedTool(
+        toolName: String,
+        arguments: JSONObject,
+        response: JSONObject,
         currentState: AgentState
     ): AgentState {
+        val executedTool = ExecutedTool(
+            toolName = toolName,
+            argumentsJson = arguments.toString(2),
+            success = response.optBoolean("success", false),
+            resultSummary = response.optString("message", "Tool executed"),
+            resultJson = extractRelevantIds(response)
+        )
+
+        return currentState
+            .addExecutedTool(executedTool)
+            .keepLastExecutedTools(10)
+    }
+
+    private fun updateFromCustomerSearch(data: Any, currentState: AgentState): AgentState {
         val customer = when (data) {
             is JSONArray -> data.optJSONObject(0)
             is JSONObject -> data
             else -> null
         }
 
-        return updateFromCustomerObject(
-            customer = customer,
-            currentState = currentState,
-            fallbackName = null
-        )
+        return updateFromCustomerObject(customer, currentState, null)
     }
 
     private fun updateFromCustomerObject(
@@ -167,45 +128,31 @@ class AgentStateUpdater {
         currentState: AgentState,
         fallbackName: String?
     ): AgentState {
-        if (customer == null) {
-            return currentState
-        }
+        if (customer == null) return currentState
 
-        val customerId = customer.optString("customerId", null)
+        val customerId = customer.optString("customerId", "")
         val firstName = customer.optString("firstName", "")
         val lastName = customer.optString("lastName", "")
 
-        val customerName = buildString {
-            append(firstName)
-            if (lastName.isNotBlank()) {
-                append(" ")
-                append(lastName)
-            }
-        }.trim().ifBlank {
-            fallbackName.orEmpty()
-        }
+        val customerName = "$firstName $lastName"
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .ifBlank { fallbackName.orEmpty() }
 
         return currentState.withCustomer(
-            customerId = customerId.ifBlank { null },
+            customerId = trustedIdOrNull(customerId),
             customerName = customerName.ifBlank { null }
         )
     }
 
-    private fun updateFromProductSearch(
-        data: Any,
-        currentState: AgentState
-    ): AgentState {
+    private fun updateFromProductSearch(data: Any, currentState: AgentState): AgentState {
         val product = when (data) {
             is JSONArray -> data.optJSONObject(0)
             is JSONObject -> data
             else -> null
         }
 
-        return updateFromProductObject(
-            product = product,
-            currentState = currentState,
-            fallbackName = null
-        )
+        return updateFromProductObject(product, currentState, null)
     }
 
     private fun updateFromProductObject(
@@ -213,18 +160,28 @@ class AgentStateUpdater {
         currentState: AgentState,
         fallbackName: String?
     ): AgentState {
-        if (product == null) {
-            return currentState
+        if (product == null) return currentState
+
+        val productId = product.optString("productId", "")
+        val productName = product.optString("name", fallbackName.orEmpty())
+
+        val purchasePrice = if (product.has("purchasePrice")) {
+            product.optDouble("purchasePrice")
+        } else {
+            null
         }
 
-        val productId = product.optString("productId", null)
-        val productName = product.optString("name", fallbackName.orEmpty())
-        val purchasePrice = product.optDouble("purchasePrice", -1.0).takeIf { it >= 0 }
+        val salePrice = if (product.has("salePrice")) {
+            product.optDouble("salePrice")
+        } else {
+            null
+        }
 
         return currentState.withProduct(
-            productId = productId.ifBlank { null },
+            productId = trustedIdOrNull(productId),
             productName = productName.ifBlank { null },
-            purchasePrice = purchasePrice
+            purchasePrice = purchasePrice,
+            salePrice = salePrice
         )
     }
 
@@ -232,20 +189,14 @@ class AgentStateUpdater {
         inventory: JSONObject?,
         currentState: AgentState
     ): AgentState {
-        if (inventory == null) {
-            return currentState
-        }
+        if (inventory == null) return currentState
 
-        val productId = inventory.optString("productId", null)
-        val stock = if (inventory.has("stock")) {
-            inventory.optInt("stock")
-        } else {
-            null
-        }
+        val productId = inventory.optString("productId", "")
+        val stock = if (inventory.has("stock")) inventory.optInt("stock") else null
 
         return currentState
             .withProduct(
-                productId = productId.ifBlank { null },
+                productId = trustedIdOrNull(productId),
                 productName = null
             )
             .withInventoryStock(stock)
@@ -255,29 +206,23 @@ class AgentStateUpdater {
         data: JSONObject?,
         currentState: AgentState
     ): AgentState {
-        if (data == null) {
-            return currentState
-        }
+        if (data == null) return currentState
 
         val purchase = data.optJSONObject("purchase")
         val inventory = data.optJSONObject("inventory")
 
-        val purchaseId = purchase?.optString("purchaseId", null)
-        val productId = purchase?.optString("productId", null)
-        val productName = purchase?.optString("productName", null)
+        val purchaseId = purchase?.optString("purchaseId", "")
+        val productId = purchase?.optString("productId", "")
 
         var newState = currentState
             .withPurchase(purchaseId?.ifBlank { null })
             .withProduct(
-                productId = productId?.ifBlank { null },
-                productName = productName?.ifBlank { null }
+                productId = trustedIdOrNull(productId),
+                productName = null
             )
 
         if (inventory != null) {
-            newState = updateFromInventoryObject(
-                inventory = inventory,
-                currentState = newState
-            )
+            newState = updateFromInventoryObject(inventory, newState)
         }
 
         return newState
@@ -287,21 +232,19 @@ class AgentStateUpdater {
         data: JSONObject?,
         currentState: AgentState
     ): AgentState {
-        if (data == null) {
-            return currentState
-        }
+        if (data == null) return currentState
 
         val sale = data.optJSONObject("sale")
         val inventoryArray = data.optJSONArray("inventory")
 
-        val saleId = sale?.optString("saleId", null)
-        val customerId = sale?.optString("customerId", null)
-        val customerName = sale?.optString("customerName", null)
+        val saleId = sale?.optString("saleId", "")
+        val customerId = sale?.optString("customerId", "")
+        val customerName = sale?.optString("customerName", "")
 
         var newState = currentState
             .withSale(saleId?.ifBlank { null })
             .withCustomer(
-                customerId = customerId?.ifBlank { null },
+                customerId = trustedIdOrNull(customerId),
                 customerName = customerName?.ifBlank { null }
             )
 
@@ -311,18 +254,15 @@ class AgentStateUpdater {
 
         if (firstItem != null) {
             newState = newState.withProduct(
-                productId = firstItem.optString("productId", null)?.ifBlank { null },
-                productName = firstItem.optString("productName", null)?.ifBlank { null }
+                productId = trustedIdOrNull(firstItem.optString("productId", "")),
+                productName = firstItem.optString("productName", "").ifBlank { null }
             )
         }
 
         val firstInventory = inventoryArray?.optJSONObject(0)
 
         if (firstInventory != null) {
-            newState = updateFromInventoryObject(
-                inventory = firstInventory,
-                currentState = newState
-            )
+            newState = updateFromInventoryObject(firstInventory, newState)
         }
 
         return newState
@@ -331,9 +271,68 @@ class AgentStateUpdater {
     private fun buildCustomerNameFromArguments(arguments: JSONObject): String? {
         val firstName = arguments.optString("firstName", "")
         val lastName = arguments.optString("lastName", "")
+        return "$firstName $lastName".trim().ifBlank { null }
+    }
 
-        return "$firstName $lastName".trim().ifBlank {
-            null
+    private fun extractRelevantIds(response: JSONObject): String {
+        val ids = mutableListOf<String>()
+
+        fun scanObject(obj: JSONObject?) {
+            obj ?: return
+            listOf(
+                "customerId",
+                "productId",
+                "purchaseId",
+                "saleId",
+                "stock",
+                "purchasePrice",
+                "salePrice"
+            ).forEach { key ->
+                val value = obj.opt(key)
+                if (value != null && value.toString().isNotBlank()) {
+                    ids.add("$key=$value")
+                }
+            }
         }
+
+        val data = response.opt("data")
+
+        when (data) {
+            is JSONObject -> {
+                scanObject(data)
+                scanObject(data.optJSONObject("purchase"))
+                scanObject(data.optJSONObject("sale"))
+                scanObject(data.optJSONObject("inventory"))
+            }
+
+            is JSONArray -> {
+                for (i in 0 until data.length()) {
+                    scanObject(data.optJSONObject(i))
+                }
+            }
+        }
+
+        return ids.joinToString(", ").ifBlank {
+            response.optString("message", "ok")
+        }
+    }
+
+    private fun trustedIdOrNull(value: String?): String? {
+        val cleanValue = value?.trim().orEmpty()
+        if (cleanValue.isBlank()) return null
+
+        val lower = cleanValue.lowercase()
+        val rejectedFragments = listOf(
+            "pega_aqui",
+            "placeholder",
+            "unknown",
+            "desconocido",
+            "inventado",
+            "\$last"
+        )
+
+        if (rejectedFragments.any { lower.contains(it) }) return null
+
+        return cleanValue
     }
 }

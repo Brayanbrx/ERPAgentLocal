@@ -6,18 +6,25 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.brayan.erpagentlocal.agent.ToolCatalogLoader
 import com.brayan.erpagentlocal.agent.ToolRegistry
-import com.brayan.erpagentlocal.ai.AgentService
-import com.brayan.erpagentlocal.ai.LocalModelService
-import com.brayan.erpagentlocal.speech.VoskSpeechService
+import com.brayan.erpagentlocal.ai.ModelBackendMode
+import com.brayan.erpagentlocal.di.AppServiceContainer
+import com.brayan.erpagentlocal.metrics.PerformanceEvent
+import com.brayan.erpagentlocal.metrics.PerformanceSnapshot
+import com.brayan.erpagentlocal.metrics.PerformanceTracker
+import com.brayan.erpagentlocal.speech.AudioPermissionState
+import com.brayan.erpagentlocal.speech.SpeechTextNormalizer
+import com.brayan.erpagentlocal.speech.VoiceMode
+import com.brayan.erpagentlocal.trace.TraceRecord
 import com.brayan.erpagentlocal.ui.components.ChatMessageUi
 import com.brayan.erpagentlocal.util.ModelFileManager
-import com.brayan.erpagentlocal.util.normalizeSpanishNumbers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class ChatUiState(
     val messages: List<ChatMessageUi> = listOf(
@@ -28,7 +35,7 @@ data class ChatUiState(
 
                 Puedo ayudarte con clientes, productos, compras, ventas e inventario usando lenguaje natural.
 
-                Escribe una instrucción o toca el micrófono para dictarla.
+                Escribe una instruccion o toca el microfono para dictarla.
             """.trimIndent()
         )
     ),
@@ -36,49 +43,134 @@ data class ChatUiState(
     val loading: Boolean = false,
     val modelReady: Boolean = false,
     val modelName: String = "",
+    val modelActiveBackend: String = "none",
+    val modelBackendMode: String = ModelBackendMode.AUTO.name,
+    val modelLoadMs: Long? = null,
+    val modelWarmupMs: Long? = null,
+    val lastGenerationMs: Long? = null,
+    val modelLastError: String? = null,
     val backendStatus: String = "Verificando...",
+    val backendLatencyMs: Long? = null,
+    val audioPermissionState: AudioPermissionState = AudioPermissionState.UNKNOWN,
+    val voiceMode: VoiceMode = VoiceMode.REVIEW,
+    val autoSendVoice: Boolean = false,
     val speechReady: Boolean = false,
     val speechStatus: String = "Voz no activada",
+    val speechLoadMs: Long? = null,
+    val lastTranscriptionMs: Long? = null,
+    val lastRecognizedText: String = "",
+    val voiceError: String? = null,
     val isRecording: Boolean = false,
     val partialSpeechText: String = "",
-    val toolsCount: Int = 0
+    val toolsCount: Int = 0,
+    val toolsSource: String = "tools.json",
+    val showDebugPanel: Boolean = false,
+    val lastTraceText: String = "",
+    val performanceSnapshot: PerformanceSnapshot = PerformanceTracker.getSnapshot()
 )
 
 /**
- * Contiene toda la lógica de negocio de la pantalla de chat.
- * Los servicios (AgentService, LocalModelService, VoskSpeechService) viven aquí
- * para sobrevivir cambios de configuración (rotación, teclado).
- * El Composable solo lee el estado y delega los eventos del usuario.
+ * Contiene toda la logica de negocio de la pantalla de chat.
+ * Los servicios viven aqui para sobrevivir cambios de configuracion.
  */
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
+    private val services = AppServiceContainer.get(application)
 
-    private val agentService = AgentService()
-    private val localModelService = LocalModelService()
-    private val voskSpeechService = VoskSpeechService()
+    private val agentService = services.agentService
+    private val localModelService = services.localModelService
+    private val voskSpeechService = services.voskSpeechService
+    private val speechTextNormalizer = SpeechTextNormalizer()
+    private val backendHealthMonitor = services.backendHealthMonitor
+    private val modelProvisioningManager = services.modelProvisioningManager
+    private val metricsStore = services.metricsStore
+    private val traceStore = services.traceStore
+
+    private var selectedModelFile: File? = null
+    private var recordingStartedAtMs: Long = 0L
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     init {
+        PerformanceTracker.markAppStarted()
+
         val catalog = ToolCatalogLoader.loadFromAssets(appContext)
         ToolRegistry.setCatalog(catalog)
-        _uiState.update { it.copy(toolsCount = catalog.count()) }
+        _uiState.update {
+            it.copy(
+                toolsCount = catalog.count(),
+                toolsSource = catalog.source,
+                showDebugPanel = false,
+                voiceMode = VoiceMode.AUTO_SEND,
+                autoSendVoice = true
+            )
+        }
 
         viewModelScope.launch {
-            val status = try { agentService.checkBackendStatus() } catch (_: Exception) { "Sin conexión" }
-            _uiState.update { it.copy(backendStatus = status) }
+            PerformanceTracker.snapshot.collect { snapshot ->
+                _uiState.update {
+                    it.copy(
+                        performanceSnapshot = snapshot,
+                        speechLoadMs = snapshot.duration(PerformanceEvent.VOSK_LOAD_MS)
+                    )
+                }
+            }
         }
+
+        refreshBackendHealth()
+        autoInitializeModelOnStartup()
     }
 
-    // ── Entrada de texto ──────────────────────────────────────────────────────
+    /**
+     * Al abrir la app: si el modelo ya esta cargado (p. ej. tras una rotacion) solo refresca el
+     * estado; si hay un modelo valido ya copiado/funcional pero sin cargar, lo inicializa solo
+     * reutilizando el flujo manual. Si no hay ningun modelo, no hace nada: el usuario usa los
+     * botones "Modelo" e "Inicializar" como siempre.
+     */
+    private fun autoInitializeModelOnStartup() {
+        if (localModelService.isInitialized()) {
+            refreshModelStatus()
+            return
+        }
+
+        val preferredModel = modelProvisioningManager.getPreferredModelFile()
+        if (!modelProvisioningManager.validateModelFile(preferredModel).valid) {
+            return
+        }
+
+        initializeModel()
+    }
 
     fun updateInput(value: String) {
         _uiState.update { it.copy(input = value) }
     }
 
-    // ── Enviar mensaje de texto ───────────────────────────────────────────────
+    fun syncAudioPermission(granted: Boolean) {
+        if (granted) {
+            _uiState.update {
+                it.copy(
+                    audioPermissionState = AudioPermissionState.GRANTED,
+                    voiceError = null
+                )
+            }
+            initializeSpeech()
+        } else {
+            _uiState.update {
+                it.copy(
+                    audioPermissionState = AudioPermissionState.DENIED,
+                    speechReady = false,
+                    speechStatus = "Modo texto disponible",
+                    voiceError = "Permiso de microfono denegado"
+                )
+            }
+        }
+    }
+
+    fun onAudioPermissionResult(granted: Boolean) {
+        syncAudioPermission(granted)
+    }
 
     fun sendMessage() {
         val cleanMessage = _uiState.value.input.trim()
@@ -94,37 +186,81 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 localModelService.isInitialized() ->
                     agentService.processNaturalLanguageWithModel(
                         userMessage = cleanMessage,
-                        localModelService = localModelService,
-                        maxSteps = 8
+                        localModelService = localModelService
                     )
 
                 else ->
                     """
-                    El modelo local no está inicializado.
+                    El modelo local no esta inicializado.
 
                     Pasos:
                     1. Toca "Modelo" y selecciona tu archivo .litertlm.
                     2. Toca "Inicializar".
-                    3. Vuelve a enviar tu instrucción.
+                    3. Vuelve a enviar tu instruccion.
                     """.trimIndent()
             }
         }
     }
 
-    // ── Voz: llenar el campo de entrada sin enviar automáticamente ───────────
-
-    private fun populateInputFromVoice(text: String) {
-        val clean = normalizeSpanishNumbers(text.trim())
-        if (clean.isBlank()) return
-        _uiState.update { it.copy(input = clean, speechStatus = "Voz lista") }
-    }
-
-    // ── Ciclo de vida del modelo ──────────────────────────────────────────────
-
     fun initializeModel() {
         runAction(userText = "Inicializar modelo") {
-            val modelFile = ModelFileManager.getDefaultModelFile(appContext)
-            localModelService.initialize(context = appContext, modelFile = modelFile)
+            val modelFile = selectedModelFile ?: modelProvisioningManager.getPreferredModelFile()
+            val validation = modelProvisioningManager.validateModelFile(modelFile)
+
+            if (!validation.valid) {
+                return@runAction validation.message
+            }
+
+            val initResult = localModelService.initialize(
+                context = appContext,
+                modelFile = modelFile,
+                requestedBackendMode = ModelBackendMode.AUTO
+            )
+
+            if (!localModelService.isInitialized()) {
+                val fallback = modelProvisioningManager.getLastFunctionalModelFile()
+                if (fallback != null && fallback.absolutePath != modelFile.absolutePath) {
+                    val fallbackResult = localModelService.initialize(
+                        context = appContext,
+                        modelFile = fallback,
+                        requestedBackendMode = ModelBackendMode.AUTO
+                    )
+                    if (localModelService.isInitialized()) {
+                        selectedModelFile = fallback
+                        refreshModelStatus()
+                        return@runAction buildString {
+                            appendLine(initResult)
+                            appendLine()
+                            appendLine("Se volvio al ultimo modelo funcional:")
+                            appendLine(fallback.absolutePath)
+                            appendLine(fallbackResult)
+                        }
+                    }
+                }
+                refreshModelStatus()
+                return@runAction initResult
+            }
+
+            var warmupSucceeded = true
+            val warmupResult = try {
+                localModelService.warmUp()
+            } catch (exception: Exception) {
+                warmupSucceeded = false
+                "Warmup fallido: ${exception.message ?: "error desconocido"}"
+            }
+
+            if (warmupSucceeded) {
+                modelProvisioningManager.markModelFunctional(modelFile)
+            }
+            selectedModelFile = modelFile
+            refreshModelStatus()
+
+            buildString {
+                appendLine(initResult)
+                appendLine()
+                appendLine("Warmup:")
+                appendLine(warmupResult)
+            }
         }
     }
 
@@ -138,7 +274,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     context = appContext,
                     uri = uri
                 )
+                selectedModelFile = file
 
+                val validation = modelProvisioningManager.validateModelFile(file)
                 refreshModelStatus()
 
                 addMessage(
@@ -147,6 +285,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         appendLine("Modelo copiado correctamente.")
                         appendLine()
                         appendLine("Archivo: ${file.absolutePath}")
+                        appendLine("Validacion: ${validation.message}")
                         appendLine()
                         appendLine("Ahora presiona \"Inicializar\".")
                     }
@@ -159,53 +298,93 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Ciclo de vida del reconocimiento de voz ───────────────────────────────
-
     fun initializeSpeech() {
-        if (_uiState.value.speechReady) return
+        val state = _uiState.value
+        if (state.speechReady) return
+        if (state.audioPermissionState == AudioPermissionState.DENIED) {
+            _uiState.update {
+                it.copy(
+                    speechStatus = "Modo texto disponible",
+                    voiceError = "Permiso de microfono denegado"
+                )
+            }
+            return
+        }
 
-        _uiState.update { it.copy(speechStatus = "Preparando reconocimiento de voz...") }
+        _uiState.update { it.copy(speechStatus = "Preparando reconocimiento de voz...", voiceError = null) }
 
         viewModelScope.launch {
             voskSpeechService.initialize(
                 context = appContext,
                 onReady = {
-                    _uiState.update { it.copy(speechReady = true, speechStatus = "Voz lista") }
-                    addMessage("assistant", "Reconocimiento de voz listo. Toca el micrófono para hablar.")
+                    _uiState.update {
+                        it.copy(
+                            speechReady = true,
+                            speechStatus = "Voz lista",
+                            voiceError = null,
+                            speechLoadMs = PerformanceTracker.getSnapshot().duration(PerformanceEvent.VOSK_LOAD_MS)
+                        )
+                    }
+                    addMessage("assistant", "Reconocimiento de voz listo. Toca el microfono para hablar.")
                 },
                 onError = { error ->
-                    _uiState.update { it.copy(speechReady = false, speechStatus = "Error de voz") }
+                    _uiState.update {
+                        it.copy(
+                            speechReady = false,
+                            speechStatus = "Error de voz",
+                            voiceError = error
+                        )
+                    }
                     addMessage("assistant", error)
                 }
             )
         }
     }
 
-    fun startRecording() {
+    fun startRecording(): Boolean {
         val state = _uiState.value
-        if (state.isRecording || !state.speechReady) return
+        if (state.isRecording) return false
+        if (!state.speechReady) {
+            _uiState.update {
+                it.copy(
+                    speechStatus = "Voz no lista",
+                    voiceError = "El reconocimiento de voz todavia no esta listo."
+                )
+            }
+            return false
+        }
 
-        _uiState.update { it.copy(partialSpeechText = "", isRecording = true, speechStatus = "Escuchando...") }
+        recordingStartedAtMs = System.currentTimeMillis()
+        _uiState.update {
+            it.copy(
+                partialSpeechText = "",
+                isRecording = true,
+                speechStatus = "Escuchando...",
+                voiceError = null
+            )
+        }
 
         voskSpeechService.startListening(
             onPartialResult = { partial ->
                 _uiState.update { it.copy(partialSpeechText = partial) }
             },
             onFinalResult = { finalText ->
-                val clean = finalText.trim()
-                _uiState.update { it.copy(isRecording = false, partialSpeechText = "") }
-                if (clean.isNotBlank()) {
-                    populateInputFromVoice(clean)
-                } else {
-                    _uiState.update { it.copy(speechStatus = "Voz lista") }
-                    addMessage("assistant", "No pude reconocer el audio. Intenta hablar un poco más claro.")
-                }
+                handleFinalVoiceText(finalText)
             },
             onError = { error ->
-                _uiState.update { it.copy(isRecording = false, speechStatus = "Error de voz", partialSpeechText = "") }
+                _uiState.update {
+                    it.copy(
+                        isRecording = false,
+                        speechStatus = "Error de voz",
+                        partialSpeechText = "",
+                        voiceError = error
+                    )
+                }
                 addMessage("assistant", error)
             }
         )
+
+        return true
     }
 
     fun stopRecording() {
@@ -213,12 +392,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(speechStatus = "Procesando audio...") }
         voskSpeechService.stopListening()
     }
-
-    fun toggleRecording() {
-        if (_uiState.value.isRecording) stopRecording() else startRecording()
-    }
-
-    // ── Gestión del chat ──────────────────────────────────────────────────────
 
     fun clearChat() {
         if (_uiState.value.isRecording) {
@@ -230,7 +403,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 messages = listOf(
                     ChatMessageUi(
                         role = "assistant",
-                        content = "Chat limpiado. Puedes escribir o grabar una nueva instrucción."
+                        content = "Chat limpiado. Puedes escribir o grabar una nueva instruccion."
                     )
                 ),
                 input = "",
@@ -241,10 +414,96 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try { agentService.processUserMessage("/clear") } catch (_: Exception) {}
+            metricsStore.clear()
+            traceStore.clear()
         }
     }
 
-    // ── Funciones internas auxiliares ─────────────────────────────────────────
+    private fun handleFinalVoiceText(finalText: String) {
+    val normalization = speechTextNormalizer.normalize(finalText)
+    val transcriptionMs = (System.currentTimeMillis() - recordingStartedAtMs).coerceAtLeast(0L)
+
+    _uiState.update {
+        it.copy(
+            isRecording = false,
+            partialSpeechText = "",
+            input = "",
+            lastTranscriptionMs = transcriptionMs,
+            lastRecognizedText = normalization.originalText,
+            voiceError = null,
+            speechStatus = "Voz lista"
+        )
+    }
+
+    if (normalization.isEmpty) {
+        _uiState.update {
+            it.copy(
+                speechStatus = "Voz lista",
+                voiceError = "No se reconocio texto util."
+            )
+        }
+        addMessage("assistant", "No pude reconocer el audio. Intenta hablar un poco mas claro.")
+        return
+    }
+
+    val clean = normalization.normalizedText.trim()
+
+    if (clean.isBlank()) {
+        addMessage("assistant", "No pude reconocer una instruccion clara.")
+        return
+    }
+
+    runAction(userText = clean, showUserMessage = true) {
+        _uiState.update {
+            it.copy(
+                input = "",
+                partialSpeechText = "",
+                speechStatus = "Voz lista"
+            )
+        }
+
+        when {
+            localModelService.isInitialized() ->
+                agentService.processNaturalLanguageWithModel(
+                    userMessage = clean,
+                    localModelService = localModelService
+                )
+
+            else ->
+                """
+                Reconoci: $clean
+
+                El modelo local no esta inicializado.
+
+                Pasos:
+                1. Toca "Modelo" y selecciona tu archivo .litertlm.
+                2. Toca "Iniciar".
+                3. Vuelve a grabar o escribir tu instruccion.
+                """.trimIndent()
+        }
+    }
+}
+
+    private fun refreshBackendHealth() {
+        viewModelScope.launch {
+            val snapshot = try {
+                backendHealthMonitor.checkHealth()
+            } catch (_: Exception) {
+                null
+            }
+
+            _uiState.update { state ->
+                if (snapshot == null) {
+                    state.copy(backendStatus = "Backend sin respuesta", backendLatencyMs = null)
+                } else {
+                    state.copy(
+                        backendStatus = snapshot.toStatusText(),
+                        backendLatencyMs = snapshot.latencyMs
+                    )
+                }
+            }
+        }
+    }
 
     private fun runAction(
         userText: String,
@@ -253,46 +512,201 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
+                PerformanceTracker.start(PerformanceEvent.TOTAL_TASK_MS)
                 _uiState.update { it.copy(loading = true) }
                 if (showUserMessage) addMessage("user", userText)
 
                 val result = action()
-                addMessage("assistant", result.ifBlank { "No recibí una respuesta válida." })
+                addMessage("assistant", result.ifBlank { "No recibi una respuesta valida." })
                 refreshModelStatus()
+                updateBasicTrace(
+                    userText = userText,
+                    result = result,
+                    source = if (userText.startsWith("/")) "debug" else "chat"
+                )
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
                 addMessage(
                     "assistant",
-                    "Ocurrió un error, pero la app pudo recuperarse.\n" +
+                    "Ocurrio un error, pero la app pudo recuperarse.\n" +
                         (throwable.message ?: throwable::class.java.simpleName)
                 )
             } finally {
+                PerformanceTracker.finish(PerformanceEvent.TOTAL_TASK_MS)
                 _uiState.update { it.copy(loading = false) }
             }
         }
     }
 
-    private fun addMessage(role: String, content: String) {
+    private fun updateBasicTrace(
+        userText: String,
+        result: String,
+        source: String
+    ) {
+        val snapshot = PerformanceTracker.getSnapshot()
+        val queueTrace = agentService.getLastExecutionTraceText()
         _uiState.update { state ->
+            val traceText = buildTraceText(
+                state = state,
+                snapshot = snapshot,
+                userText = userText,
+                result = result,
+                source = source,
+                queueTrace = queueTrace
+            )
+            persistObservability(
+                state = state,
+                snapshot = snapshot,
+                userText = userText,
+                result = result,
+                source = source
+            )
             state.copy(
-                messages = state.messages + ChatMessageUi(role = role, content = content)
+                lastTraceText = traceText
             )
         }
     }
 
-    private fun refreshModelStatus() {
+    private fun buildTraceText(
+        state: ChatUiState,
+        snapshot: PerformanceSnapshot,
+        userText: String,
+        result: String,
+        source: String,
+        queueTrace: String
+    ): String {
+        val toolSummary = agentService.getLastToolTraceSummary()
+        return buildString {
+            if (queueTrace.isNotBlank()) {
+                appendLine(queueTrace)
+                appendLine()
+            }
+            appendLine("TRAZABILIDAD DETALLADA")
+            appendLine("Fuente: $source")
+            appendLine("Texto original: $userText")
+            appendLine("Texto transcrito: ${state.lastRecognizedText.ifBlank { "N/D" }}")
+            appendLine("Texto normalizado: $userText")
+            appendLine("Prompt/resumen usado: ${if (queueTrace.isNotBlank()) "cola reactiva" else "prompt de decision local"}")
+            appendLine("Intencion entendida: ${inferIntent(userText, result)}")
+            appendLine("Tool solicitada:")
+            appendLine(toolSummary)
+            appendLine("Resultado de validacion: AgentExecutor.validateReady antes de ejecucion")
+            appendLine("Endpoint llamado: ${agentService.getLastEndpointTraceText()}")
+            appendLine("Respuesta Lambda: ${toolSummary.take(800)}")
+            appendLine("Estado actualizado:")
+            appendLine(agentService.getStateText().take(1200))
+            appendLine("Modelo activo: ${state.modelName.ifBlank { "N/D" }}")
+            appendLine("Backend activo: ${state.modelActiveBackend}")
+            appendLine("Tools cargadas: ${state.toolsCount} (${state.toolsSource})")
+            appendLine("Ultimo error: ${state.voiceError ?: "N/D"}")
+            appendLine("Tiempo total: ${snapshot.duration(PerformanceEvent.TOTAL_TASK_MS) ?: "N/D"} ms")
+            appendLine("Generation ms: ${snapshot.duration(PerformanceEvent.GENERATION_MS) ?: "N/D"}")
+            appendLine("Lambda ms: ${snapshot.duration(PerformanceEvent.LAMBDA_LATENCY_MS) ?: "N/D"}")
+            appendLine()
+            appendLine("Resultado final:")
+            appendLine(result.take(1200))
+        }.trim()
+    }
+
+    private fun persistObservability(
+        state: ChatUiState,
+        snapshot: PerformanceSnapshot,
+        userText: String,
+        result: String,
+        source: String
+    ) {
+        val toolSummary = agentService.getLastToolTraceSummary()
+        metricsStore.saveSnapshot(label = source, snapshot = snapshot)
+        traceStore.save(
+            TraceRecord(
+                originalText = userText,
+                transcribedText = state.lastRecognizedText,
+                normalizedText = userText,
+                promptSummary = if (agentService.getLastExecutionTraceText().isNotBlank()) {
+                    "cola reactiva"
+                } else {
+                    "prompt de decision local"
+                },
+                understoodIntent = inferIntent(userText, result),
+                requestedTool = toolSummary,
+                argumentsText = toolSummary,
+                validationResult = "AgentExecutor.validateReady",
+                endpointCalled = agentService.getLastEndpointTraceText(),
+                lambdaResponse = toolSummary,
+                updatedState = agentService.getStateText(),
+                totalMs = snapshot.duration(PerformanceEvent.TOTAL_TASK_MS),
+                modelName = state.modelName,
+                activeBackend = state.modelActiveBackend,
+                toolsExecuted = toolSummary,
+                result = result,
+                error = state.voiceError
+            )
+        )
+    }
+
+    private fun inferIntent(userText: String, result: String): String {
+        val text = "$userText $result".lowercase()
+        return when {
+            "cliente" in text && ("crea" in text || "creado" in text) -> "crear cliente"
+            "producto" in text && ("crea" in text || "creado" in text) -> "crear producto"
+            "compra" in text -> "registrar compra"
+            "venta" in text || "vende" in text -> "registrar venta"
+            "inventario" in text || "stock" in text -> "consultar inventario"
+            "delete" in text || "elimina" in text -> "accion destructiva"
+            else -> "instruccion ERP"
+        }
+    }
+
+    private fun addMessage(role: String, content: String) {
+        val visualRole = classifyMessageRole(role, content)
         _uiState.update { state ->
             state.copy(
-                modelReady = localModelService.isInitialized(),
-                modelName = localModelService.getLoadedModelName().orEmpty()
+                messages = state.messages + ChatMessageUi(role = visualRole, content = content)
+            )
+        }
+    }
+
+    private fun classifyMessageRole(role: String, content: String): String {
+        if (role != "assistant") return role
+        val normalized = content.lowercase()
+        return when {
+            "confirmacion pendiente" in normalized -> "confirmation"
+            normalized.startsWith("error") ||
+                "ocurrio un error" in normalized ||
+                "fallido" in normalized -> "error"
+            "accion bloqueada" in normalized ||
+                "bloqueada por politica" in normalized -> "warning"
+            "trazabilidad" in normalized ||
+                "tool:" in normalized ||
+                "tools cargadas" in normalized -> "tool-trace"
+            "demo mode" in normalized ||
+                "memoria" in normalized && "estado" in normalized -> "system"
+            else -> "assistant"
+        }
+    }
+
+    private fun refreshModelStatus() {
+        val status = localModelService.getModelStatus()
+        _uiState.update { state ->
+            state.copy(
+                modelReady = status.initialized,
+                modelName = status.modelName.orEmpty(),
+                modelActiveBackend = status.activeBackend,
+                modelBackendMode = status.backendMode.name,
+                modelLoadMs = status.modelLoadMs,
+                modelWarmupMs = status.warmupMs,
+                lastGenerationMs = status.lastGenerationMs,
+                modelLastError = status.lastError
             )
         }
     }
 
     override fun onCleared() {
         super.onCleared()
-        localModelService.close()
-        voskSpeechService.release()
+        if (_uiState.value.isRecording) {
+            voskSpeechService.cancelListening()
+        }
+        // Servicios pesados viven en AppServiceContainer para sobrevivir recreaciones de pantalla.
     }
 }
