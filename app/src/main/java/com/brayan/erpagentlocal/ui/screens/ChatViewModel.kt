@@ -146,6 +146,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(input = value) }
     }
 
+    /**
+     * Alterna entre Modo Chat y Modo Tecnico. Es puramente visual: solo cambia
+     * el flag showDebugPanel sin tocar mensajes, modelo, voz ni ejecucion de tools.
+     */
+    fun toggleTechnicalMode() {
+        _uiState.update { it.copy(showDebugPanel = !it.showDebugPanel) }
+    }
+
+    /**
+     * Vuelve explicitamente al Modo Chat sin alterar el estado interno del agente.
+     */
+    fun openChatMode() {
+        _uiState.update { it.copy(showDebugPanel = false) }
+    }
+
     fun syncAudioPermission(granted: Boolean) {
         if (granted) {
             _uiState.update {

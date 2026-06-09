@@ -104,7 +104,8 @@ fun ChatScreen(
                 onPickModel = {
                     modelPickerLauncher.launch(arrayOf("application/octet-stream", "*/*"))
                 },
-                onInitializeModel = { viewModel.initializeModel() }
+                onInitializeModel = { viewModel.initializeModel() },
+                onToggleTechnical = { viewModel.toggleTechnicalMode() }
             )
         },
         bottomBar = {
@@ -132,21 +133,26 @@ fun ChatScreen(
                 .background(ErpColors.Background)
                 .padding(paddingValues)
         ) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (uiState.loading) {
-                    item {
-                        LoadingIndicator()
+            if (uiState.showDebugPanel) {
+                // Modo Tecnico: vista de solo lectura. No altera el chat ni el agente.
+                TechnicalTraceScreen(uiState = uiState)
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (uiState.loading) {
+                        item {
+                            LoadingIndicator()
+                        }
                     }
-                }
 
-                items(uiState.messages) { message ->
-                    MessageBubble(message = message)
+                    items(uiState.messages) { message ->
+                        MessageBubble(message = message)
+                    }
                 }
             }
         }
@@ -158,7 +164,8 @@ private fun ChatHeader(
     uiState: ChatUiState,
     onClear: () -> Unit,
     onPickModel: () -> Unit,
-    onInitializeModel: () -> Unit
+    onInitializeModel: () -> Unit,
+    onToggleTechnical: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -187,13 +194,14 @@ private fun ChatHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                }
 
+                TextButton(
+                    onClick = onToggleTechnical
+                ) {
                     Text(
-                        text = "Chat local para tu ERP serverless",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ErpColors.TextMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        text = if (uiState.showDebugPanel) "Chat" else "Técnico",
+                        color = ErpColors.Primary
                     )
                 }
 
